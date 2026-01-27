@@ -1,0 +1,218 @@
+# SASTify Self-Scan Workflow
+# This workflow runs SASTify on its OWN codebase to find security issues
+# and generates a comprehensive report with AI analysis
+
+name: SASTify Self-Scan
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  # Manual trigger for on-demand scans
+  workflow_dispatch:
+    inputs:
+      ai_analysis:
+        description: 'Enable AI analysis (requires DEEPSEEK_API_KEY secret)'
+        required: false
+        default: 'true'
+        type: boolean
+      max_ai_issues:
+        description: 'Maximum issues to analyze with AI'
+        required: false
+        default: '30'
+        type: string
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  self-scan:
+    name: SASTify Self-Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyyaml
+
+      - name: Run SASTify Self-Scan (Table Output)
+        id: table_scan
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          echo "🔍 Running SASTify security scan on own codebase..."
+          cd Backend
+          python cli.py scan .. \
+            --exclude "**/node_modules/**,**/__pycache__/**,**/tests/**,**/.git/**" \
+            --languages python,javascript,typescript \
+            --verbose 2>&1 | tee ../scan-output.txt
+        continue-on-error: true
+
+      - name: Generate SARIF Report (for GitHub Security)
+        id: sarif_scan
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          cd Backend
+          python cli.py scan .. \
+            --format sarif \
+            --output ../sastify-results.sarif \
+            --exclude "**/node_modules/**,**/__pycache__/**,**/tests/**,**/.git/**" \
+            --languages python,javascript,typescript
+        continue-on-error: true
+
+      - name: Generate HTML Report with AI Analysis
+        id: html_scan
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          cd Backend
+          AI_FLAG=""
+          if [ "${{ github.event.inputs.ai_analysis || 'true' }}" == "true" ] && [ -n "$DEEPSEEK_API_KEY" ]; then
+            AI_FLAG="--ai-analysis --max-ai-issues ${{ github.event.inputs.max_ai_issues || '30' }}"
+            echo "🤖 AI analysis enabled"
+          else
+            echo "ℹ️ AI analysis disabled (no API key or disabled)"
+          fi
+          
+          python cli.py scan .. \
+            --format html \
+            --output ../security-report.html \
+            --exclude "**/node_modules/**,**/__pycache__/**,**/tests/**,**/.git/**" \
+            --languages python,javascript,typescript \
+            $AI_FLAG \
+            --verbose
+        continue-on-error: true
+
+      - name: Generate JSON Report with AI Analysis
+        id: json_scan
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          cd Backend
+          AI_FLAG=""
+          if [ "${{ github.event.inputs.ai_analysis || 'true' }}" == "true" ] && [ -n "$DEEPSEEK_API_KEY" ]; then
+            AI_FLAG="--ai-analysis --max-ai-issues ${{ github.event.inputs.max_ai_issues || '30' }}"
+          fi
+          
+          python cli.py scan .. \
+            --format json \
+            --output ../security-report.json \
+            --exclude "**/node_modules/**,**/__pycache__/**,**/tests/**,**/.git/**" \
+            --languages python,javascript,typescript \
+            $AI_FLAG
+        continue-on-error: true
+
+      - name: Upload SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: sastify-results.sarif
+          category: SASTify-Self-Scan
+        continue-on-error: true
+
+      - name: Upload Security Reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-reports
+          path: |
+            sastify-results.sarif
+            security-report.html
+            security-report.json
+            scan-output.txt
+          retention-days: 30
+
+      - name: Display Scan Summary
+        if: always()
+        run: |
+          echo "📊 SASTify Scan Summary"
+          echo "========================"
+          if [ -f security-report.json ]; then
+            # Extract summary from JSON
+            python3 -c "
+          import json
+          with open('security-report.json') as f:
+              data = json.load(f)
+              print(f\"Files scanned: {data.get('files_scanned', 'N/A')}\")
+              print(f\"Total vulnerabilities: {data.get('total_vulnerabilities', 'N/A')}\")
+              counts = data.get('severity_counts', {})
+              for sev in ['critical', 'high', 'medium', 'low']:
+                  if counts.get(sev, 0) > 0:
+                      print(f\"  {sev.upper()}: {counts[sev]}\")
+          "
+          fi
+          echo ""
+          echo "📥 Reports available in workflow artifacts"
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            
+            let summary = '## 🔒 SASTify Self-Scan Results\n\n';
+            
+            try {
+              const report = JSON.parse(fs.readFileSync('security-report.json', 'utf8'));
+              const total = report.total_vulnerabilities || 0;
+              const counts = report.severity_counts || {};
+              
+              if (total === 0) {
+                summary += '✅ **No security issues found!**\n';
+              } else {
+                summary += `| Severity | Count |\n|----------|-------|\n`;
+                if (counts.critical) summary += `| 🔴 Critical | ${counts.critical} |\n`;
+                if (counts.high) summary += `| 🟠 High | ${counts.high} |\n`;
+                if (counts.medium) summary += `| 🟡 Medium | ${counts.medium} |\n`;
+                if (counts.low) summary += `| 🔵 Low | ${counts.low} |\n`;
+                summary += `\n**Total Issues:** ${total}\n`;
+                
+                // Show AI analysis summary if available
+                const aiAnalyzed = (report.vulnerabilities || []).filter(v => v.ai_analyzed);
+                if (aiAnalyzed.length > 0) {
+                  const falsePositives = aiAnalyzed.filter(v => v.ai_is_false_positive).length;
+                  summary += `\n### 🤖 AI Analysis\n`;
+                  summary += `- Issues analyzed: ${aiAnalyzed.length}\n`;
+                  summary += `- Likely false positives: ${falsePositives}\n`;
+                  summary += `- Confirmed vulnerabilities: ${aiAnalyzed.length - falsePositives}\n`;
+                }
+              }
+            } catch (e) {
+              summary += '⚠️ Could not parse scan results.\n';
+            }
+            
+            summary += '\n📥 Full reports available in workflow artifacts\n';
+            summary += '\n---\n*Powered by SASTify*';
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });
+
+      - name: Check for Critical Issues
+        if: always()
+        run: |
+          if [ -f security-report.json ]; then
+            CRITICAL=$(python3 -c "import json; data=json.load(open('security-report.json')); print(data.get('severity_counts', {}).get('critical', 0))")
+            if [ "$CRITICAL" -gt 0 ]; then
+              echo "::warning::Found $CRITICAL critical severity issues!"
+            fi
+          fi

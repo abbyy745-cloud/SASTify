@@ -1,0 +1,125 @@
+name: 'SASTify Security Scan'
+description: 'AI-powered security scanner for EdTech and mobile applications'
+author: 'SASTify'
+branding:
+  icon: 'shield'
+  color: 'purple'
+
+inputs:
+  path:
+    description: 'Path to scan (file or directory)'
+    required: false
+    default: '.'
+  format:
+    description: 'Output format (json, sarif, html, summary)'
+    required: false
+    default: 'sarif'
+  fail-on:
+    description: 'Comma-separated list of severities to fail on (critical,high,medium,low)'
+    required: false
+    default: 'critical,high'
+  languages:
+    description: 'Comma-separated list of languages to scan'
+    required: false
+    default: ''
+  exclude:
+    description: 'Patterns to exclude (comma-separated)'
+    required: false
+    default: '**/node_modules/**,**/vendor/**,**/.git/**'
+  api-key:
+    description: 'DeepSeek API key for AI analysis (or use DEEPSEEK_API_KEY secret)'
+    required: false
+    default: ''
+  ai-analysis:
+    description: 'Enable AI-powered analysis for vulnerabilities'
+    required: false
+    default: 'true'
+  max-ai-issues:
+    description: 'Maximum number of issues to analyze with AI'
+    required: false
+    default: '20'
+  upload-sarif:
+    description: 'Upload SARIF results to GitHub Security tab'
+    required: false
+    default: 'true'
+
+outputs:
+  total-issues:
+    description: 'Total number of issues found'
+  critical-count:
+    description: 'Number of critical issues'
+  high-count:
+    description: 'Number of high severity issues'
+  report-path:
+    description: 'Path to the generated report file'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      shell: bash
+      run: |
+        pip install -q fastapi uvicorn esprima colorama
+
+    - name: Run SASTify Scan
+      shell: bash
+      id: scan
+      env:
+        DEEPSEEK_API_KEY: ${{ inputs.api-key }}
+      run: |
+        cd ${{ github.action_path }}
+        
+        # Build arguments
+        ARGS="scan ${{ inputs.path }}"
+        ARGS="$ARGS --format ${{ inputs.format }}"
+        ARGS="$ARGS --output sastify-results.${{ inputs.format == 'html' && 'html' || 'sarif' }}"
+        
+        if [ -n "${{ inputs.languages }}" ]; then
+          ARGS="$ARGS --languages ${{ inputs.languages }}"
+        fi
+        
+        if [ -n "${{ inputs.exclude }}" ]; then
+          ARGS="$ARGS --exclude ${{ inputs.exclude }}"
+        fi
+        
+        if [ -n "${{ inputs.fail-on }}" ]; then
+          ARGS="$ARGS --fail-on ${{ inputs.fail-on }}"
+        fi
+        
+        # AI Analysis options
+        if [ "${{ inputs.ai-analysis }}" == "true" ]; then
+          ARGS="$ARGS --ai-analysis"
+          ARGS="$ARGS --max-ai-issues ${{ inputs.max-ai-issues }}"
+        fi
+        
+        # Run scanner
+        python -m Backend.cli $ARGS || SCAN_EXIT=$?
+        
+        # Parse results for outputs
+        if [ -f "sastify-results.sarif" ]; then
+          TOTAL=$(cat sastify-results.sarif | python -c "import sys,json; d=json.load(sys.stdin); print(len(d['runs'][0]['results']))" 2>/dev/null || echo "0")
+          echo "total-issues=$TOTAL" >> $GITHUB_OUTPUT
+          echo "report-path=sastify-results.sarif" >> $GITHUB_OUTPUT
+        fi
+        
+        exit ${SCAN_EXIT:-0}
+
+    - name: Upload SARIF to GitHub Security
+      if: ${{ inputs.upload-sarif == 'true' && inputs.format == 'sarif' }}
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: sastify-results.sarif
+        category: SASTify
+
+    - name: Upload Report Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: sastify-security-report
+        path: |
+          sastify-results.*
+        retention-days: 30

@@ -1,0 +1,96 @@
+{
+  "name": "sastify-security",
+  "displayName": "SASTify - AI Security Scanner",
+  "description": "AI-powered static application security testing for JavaScript and Python",
+  "version": "1.0.0",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Linters",
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:javascript",
+    "onLanguage:python",
+    "onCommand:sastify.scanFile",
+    "onCommand:sastify.scanSelection",
+    "onCommand:sastify.scanWorkspace"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "sastify.scanFile",
+        "title": "SASTify: Scan Current File",
+        "category": "SASTify"
+      },
+      {
+        "command": "sastify.scanSelection",
+        "title": "SASTify: Scan Selected Code",
+        "category": "SASTify"
+      },
+      {
+        "command": "sastify.scanWorkspace",
+        "title": "SASTify: Scan Workspace",
+        "category": "SASTify"
+      },
+      {
+        "command": "sastify.showResults",
+        "title": "SASTify: Show Scan Results",
+        "category": "SASTify"
+      }
+    ],
+    "menus": {
+      "command-palette": [
+        {
+          "command": "sastify.scanFile",
+          "when": "editorLangId == javascript || editorLangId == python"
+        },
+        {
+          "command": "sastify.scanSelection",
+          "when": "editorHasSelection && (editorLangId == javascript || editorLangId == python)"
+        },
+        {
+          "command": "sastify.scanWorkspace",
+          "when": "workspaceFolderCount > 0"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "sastify.scanSelection",
+          "when": "editorHasSelection && (editorLangId == javascript || editorLangId == python)",
+          "group": "security"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "SASTify",
+      "properties": {
+        "sastify.apiUrl": {
+          "type": "string",
+          "default": "http://localhost:8000",
+          "description": "SASTify backend API URL"
+        },
+        "sastify.autoScan": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically scan on file save"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.74.0",
+    "@types/node": "16.x",
+    "typescript": "^4.9.4"
+  },
+  "dependencies": {
+    "axios": "^1.4.0"
+  }
+}

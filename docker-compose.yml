@@ -1,0 +1,75 @@
+# SASTify Docker Compose Configuration
+# Development and production configurations
+
+services:
+  # ======== API Server ========
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: sastify:latest
+    container_name: sastify-api
+    ports:
+      - "8000:8000"
+    environment:
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - DATABASE_PATH=/app/data/sastify.db
+      - LOG_LEVEL=INFO
+    volumes:
+      # Persist database
+      - sastify-data:/app/data
+      # Mount code for scanning (development)
+      - ./:/code:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - sastify-network
+
+  # ======== CLI Scanner ========
+  cli:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: sastify:latest
+    container_name: sastify-cli
+    entrypoint: ["python", "-m", "Backend.cli"]
+    volumes:
+      - ./:/code:ro
+      - ./reports:/app/reports
+    working_dir: /code
+    profiles:
+      - cli
+
+  # ======== Redis (Optional) ========
+  # For caching and rate limiting in production
+  redis:
+    image: redis:7-alpine
+    container_name: sastify-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - sastify-network
+    profiles:
+      - production
+
+volumes:
+  sastify-data:
+    driver: local
+  redis-data:
+    driver: local
+
+networks:
+  sastify-network:
+    driver: bridge

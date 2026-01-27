@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SASTify Configuration",
+  "description": "Configuration file for SASTify security scanner",
+  
+  "rules": {
+    "enable": ["all"],
+    "disable": [],
+    "severity_override": {
+      "example_rule_id": "high"
+    }
+  },
+  
+  "exclude": [
+    "**/node_modules/**",
+    "**/vendor/**",
+    "**/.git/**",
+    "**/dist/**",
+    "**/build/**",
+    "**/__pycache__/**",
+    "**/venv/**",
+    "**/.venv/**",
+    "**/env/**",
+    "**/*.min.js",
+    "**/*.bundle.js",
+    "**/coverage/**",
+    "**/.next/**",
+    "**/Pods/**"
+  ],
+  
+  "languages": [
+    "python",
+    "javascript",
+    "typescript",
+    "java",
+    "php",
+    "swift",
+    "kotlin",
+    "dart"
+  ],
+  
+  "edtech": {
+    "enabled": true,
+    "ferpa_mode": true,
+    "coppa_mode": false,
+    "exam_integrity_checks": true,
+    "ai_security_checks": true
+  },
+  
+  "mobile": {
+    "enabled": true,
+    "platforms": ["ios", "android", "flutter"],
+    "check_permissions": true,
+    "check_storage": true,
+    "check_network": true
+  },
+  
+  "output": {
+    "format": "sarif",
+    "file": "sastify-results.sarif",
+    "colors": true,
+    "verbose": false
+  },
+  
+  "ci": {
+    "fail_on": ["critical", "high"],
+    "warning_as_error": false,
+    "max_issues": 100
+  },
+  
+  "ai_analysis": {
+    "enabled": false,
+    "api_key_env": "DEEPSEEK_API_KEY",
+    "auto_analyze": false,
+    "min_confidence": 0.7
+  },
+  
+  "false_positives": {
+    "check_database": true,
+    "fingerprints": [
+      "example_fingerprint_to_ignore"
+    ]
+  },
+  
+  "custom_rules": [],
+  
+  "extensions": {
+    "custom_sources": [],
+    "custom_sinks": [],
+    "custom_sanitizers": []
+  }
+}

@@ -1,0 +1,695 @@
+# SASTify Comprehensive Security Rules
+# AST-based taint analysis configuration
+# Pattern matching is used as a fallback layer
+
+# =============================================================================
+# SOURCES - Entry points for user-controlled data
+# =============================================================================
+
+sources:
+  python:
+    # Flask Framework
+    flask:
+      - request.args
+      - request.args.get
+      - request.form
+      - request.form.get
+      - request.values
+      - request.values.get
+      - request.cookies
+      - request.cookies.get
+      - request.headers
+      - request.headers.get
+      - request.json
+      - request.data
+      - request.files
+      - request.url
+      - request.path
+      - request.full_path
+      - request.environ
+      
+    # Django Framework
+    django:
+      - request.GET
+      - request.GET.get
+      - request.POST
+      - request.POST.get
+      - request.COOKIES
+      - request.META
+      - request.body
+      - request.path
+      - request.path_info
+      - request.FILES
+      - request.content_type
+      - request.session
+      
+    # FastAPI Framework
+    fastapi:
+      - Query
+      - Body
+      - Form
+      - Header
+      - Cookie
+      - Path
+      - Request.body
+      - Request.query_params
+      - Request.path_params
+      - Request.headers
+      - Request.cookies
+      
+    # Standard Library
+    stdlib:
+      - input
+      - sys.argv
+      - os.environ
+      - os.environ.get
+      - os.getenv
+      
+    # File Sources
+    file:
+      - open
+      - file.read
+      - file.readline
+      - file.readlines
+      - Path.read_text
+      - Path.read_bytes
+      
+    # Network Sources  
+    network:
+      - socket.recv
+      - socket.recvfrom
+      - requests.get
+      - requests.post
+      - urllib.request.urlopen
+      - http.client.HTTPResponse.read
+
+  javascript:
+    # Express.js Framework
+    express:
+      - req.body
+      - req.query
+      - req.params
+      - req.cookies
+      - req.headers
+      - req.url
+      - req.path
+      - req.hostname
+      - req.ip
+      - req.originalUrl
+      - req.get
+      - req.header
+      
+    # Browser APIs
+    browser:
+      - document.location
+      - document.location.href
+      - document.location.search
+      - document.location.hash
+      - document.location.pathname
+      - location.search
+      - location.hash
+      - location.href
+      - document.cookie
+      - document.referrer
+      - document.URL
+      - document.documentURI
+      - window.name
+      - window.location
+      - localStorage.getItem
+      - sessionStorage.getItem
+      - history.state
+      
+    # DOM Inputs
+    dom:
+      - document.getElementById
+      - document.querySelector
+      - document.querySelectorAll
+      - document.getElementsByName
+      - element.value
+      - element.innerHTML
+      - element.textContent
+      - element.innerText
+      - FormData
+      - URLSearchParams
+      
+    # Node.js
+    node:
+      - process.env
+      - process.argv
+      - fs.readFileSync
+      - fs.readFile
+      - Buffer.from
+      - require
+      - child_process.execSync
+      
+    # React/Frontend
+    react:
+      - props
+      - this.props
+      - useState
+      - useParams
+      - useSearchParams
+      - useLocation
+
+  # EdTech-Specific Sources
+  edtech:
+    student_data:
+      - student_id
+      - student_name
+      - roll_number
+      - roll_no
+      - cnic
+      - ssn
+      - date_of_birth
+      - dob
+      - parent_email
+      - parent_contact
+      - guardian_email
+      - address
+      - grade
+      - marks
+      - score
+      - gpa
+      
+    exam_data:
+      - exam_token
+      - exam_id
+      - submission_id
+      - answer_key
+      - correct_answer
+      - question_id
+      - test_score
+      - submission_time
+      
+    ai_data:
+      - prompt
+      - user_prompt
+      - user_input
+      - student_input
+      - model_output
+      - generated_text
+      - ai_response
+      - llm_output
+
+# =============================================================================
+# SINKS - Dangerous functions that can cause vulnerabilities
+# =============================================================================
+
+sinks:
+  python:
+    # SQL Injection
+    sql_injection:
+      - cursor.execute
+      - cursor.executemany
+      - connection.execute
+      - db.execute
+      - db.executemany
+      - engine.execute
+      - session.execute
+      - Model.objects.raw
+      - Model.objects.extra
+      - RawSQL
+      - sqlalchemy.text
+      - psycopg2.connect
+      - sqlite3.connect
+      - pymysql.connect
+      
+    # Code Injection
+    code_injection:
+      - eval
+      - exec
+      - compile
+      - execfile
+      - __import__
+      - importlib.import_module
+      - getattr
+      - setattr
+      - delattr
+      - ast.literal_eval
+      
+    # Command/Shell Injection
+    shell_injection:
+      - os.system
+      - os.popen
+      - os.popen2
+      - os.popen3
+      - os.popen4
+      - os.spawn
+      - os.spawnl
+      - os.spawnle
+      - os.spawnlp
+      - os.spawnlpe
+      - os.spawnv
+      - os.spawnve
+      - os.spawnvp
+      - os.spawnvpe
+      - subprocess.call
+      - subprocess.check_call
+      - subprocess.check_output
+      - subprocess.Popen
+      - subprocess.run
+      - commands.getoutput
+      - commands.getstatusoutput
+      
+    # XSS / Template Injection
+    xss:
+      - render_template_string
+      - Markup
+      - flask.Response
+      - django.utils.safestring.mark_safe
+      - jinja2.Template
+      - mako.template.Template
+      
+    # Path Traversal
+    path_traversal:
+      - open
+      - file
+      - io.open
+      - os.path.join
+      - pathlib.Path
+      - send_file
+      - send_from_directory
+      - shutil.copy
+      - shutil.copy2
+      - shutil.move
+      - shutil.copytree
+      - os.rename
+      - os.remove
+      - os.unlink
+      - os.makedirs
+      - os.mkdir
+      
+    # Insecure Deserialization
+    deserialization:
+      - pickle.load
+      - pickle.loads
+      - cPickle.load
+      - cPickle.loads
+      - yaml.load
+      - yaml.unsafe_load
+      - marshal.load
+      - marshal.loads
+      - shelve.open
+      - jsonpickle.decode
+      
+    # SSRF
+    ssrf:
+      - requests.get
+      - requests.post
+      - requests.put
+      - requests.delete
+      - requests.patch
+      - requests.head
+      - requests.options
+      - urllib.request.urlopen
+      - urllib.request.urlretrieve
+      - urllib2.urlopen
+      - httplib.HTTPConnection
+      - httplib.HTTPSConnection
+      - http.client.HTTPConnection
+      - http.client.HTTPSConnection
+      - socket.create_connection
+      
+    # Weak Cryptography
+    weak_crypto:
+      - hashlib.md5
+      - hashlib.sha1
+      - Crypto.Hash.MD5
+      - Crypto.Hash.SHA
+      - crypt.crypt
+      - base64.b64encode
+      - base64.b64decode
+      
+    # Logging Sensitive Data
+    logging:
+      - print
+      - logging.debug
+      - logging.info
+      - logging.warning
+      - logging.error
+      - logging.critical
+      - logger.debug
+      - logger.info
+      - logger.warning
+      - logger.error
+      - logger.critical
+
+  javascript:
+    # SQL Injection
+    sql_injection:
+      - db.query
+      - pool.query
+      - connection.query
+      - client.query
+      - sequelize.query
+      - knex.raw
+      - mongoose.connection.db.command
+      - collection.find
+      - collection.findOne
+      - collection.aggregate
+      - Model.find
+      - Model.findOne
+      
+    # Code Injection
+    code_injection:
+      - eval
+      - Function
+      - new Function
+      - setTimeout
+      - setInterval
+      - setImmediate
+      - vm.runInContext
+      - vm.runInNewContext
+      - vm.runInThisContext
+      - vm.compileFunction
+      - require
+      - child_process.exec
+      - child_process.execSync
+      - child_process.spawn
+      - child_process.spawnSync
+      - child_process.execFile
+      - child_process.fork
+      
+    # XSS
+    xss:
+      - innerHTML
+      - outerHTML
+      - insertAdjacentHTML
+      - document.write
+      - document.writeln
+      - document.open
+      - element.innerHTML
+      - element.outerHTML
+      - jQuery.html
+      - $.html
+      - jQuery.append
+      - jQuery.prepend
+      - jQuery.after
+      - jQuery.before
+      - React.dangerouslySetInnerHTML
+      
+    # Path Traversal
+    path_traversal:
+      - fs.readFile
+      - fs.readFileSync
+      - fs.writeFile
+      - fs.writeFileSync
+      - fs.appendFile
+      - fs.appendFileSync
+      - fs.unlink
+      - fs.unlinkSync
+      - fs.rename
+      - fs.renameSync
+      - fs.createReadStream
+      - fs.createWriteStream
+      - path.join
+      - path.resolve
+      - require
+      
+    # Prototype Pollution
+    prototype_pollution:
+      - __proto__
+      - prototype
+      - constructor.prototype
+      - Object.assign
+      - Object.defineProperty
+      - Object.setPrototypeOf
+      - Reflect.setPrototypeOf
+      - _.merge
+      - _.extend
+      - _.defaults
+      - _.defaultsDeep
+      - $.extend
+      - jQuery.extend
+      
+    # SSRF
+    ssrf:
+      - fetch
+      - axios
+      - axios.get
+      - axios.post
+      - axios.put
+      - axios.delete
+      - http.get
+      - http.request
+      - https.get
+      - https.request
+      - request
+      - got
+      - node-fetch
+      - superagent
+      
+    # Insecure Deserialization
+    deserialization:
+      - JSON.parse
+      - unserialize
+      - node-serialize.unserialize
+      
+    # DOM Manipulation (potential XSS)
+    dom_xss:
+      - location.href
+      - location.assign
+      - location.replace
+      - window.open
+      - document.location
+      - document.domain
+      - postMessage
+
+  # EdTech-Specific Sinks
+  edtech:
+    pii_leakage:
+      - console.log
+      - console.debug
+      - console.info
+      - console.warn
+      - console.error
+      - print
+      - logging.info
+      - logging.debug
+      - logger.info
+      - logger.debug
+      - res.json
+      - res.send
+      - jsonify
+      
+    exam_integrity:
+      - submit_grade
+      - update_score
+      - calculate_marks
+      - save_answer
+      - record_submission
+      - grade_submission
+      
+    ai_security:
+      - openai.Completion.create
+      - openai.ChatCompletion.create
+      - anthropic.Completion.create
+      - llm.generate
+      - model.predict
+      - model.generate
+      - pipeline
+
+# =============================================================================
+# SANITIZERS - Functions that make data safe
+# =============================================================================
+
+sanitizers:
+  python:
+    # XSS Prevention
+    xss:
+      - html.escape
+      - markupsafe.escape
+      - markupsafe.Markup.escape
+      - bleach.clean
+      - bleach.sanitize
+      - django.utils.html.escape
+      - django.utils.html.strip_tags
+      - cgi.escape
+      
+    # SQL Injection Prevention
+    sql:
+      - parameterized_query
+      - prepared_statement
+      
+    # Path Traversal Prevention
+    path:
+      - werkzeug.utils.secure_filename
+      - os.path.basename
+      - os.path.normpath
+      - pathlib.Path.resolve
+      
+    # Command Injection Prevention
+    command:
+      - shlex.quote
+      - shlex.split
+      - pipes.quote
+      
+    # General
+    general:
+      - str
+      - int
+      - float
+      - bool
+      - uuid.UUID
+      - re.escape
+
+  javascript:
+    # XSS Prevention
+    xss:
+      - DOMPurify.sanitize
+      - sanitize-html
+      - xss
+      - escape
+      - escapeHtml
+      - textContent
+      
+    # URL Encoding
+    url:
+      - encodeURIComponent
+      - encodeURI
+      - escape
+      
+    # SQL Prevention
+    sql:
+      - mysql.escape
+      - pg.escapeLiteral
+      - pg.escapeIdentifier
+      
+    # Path Prevention
+    path:
+      - path.basename
+      - path.normalize
+
+# =============================================================================
+# AST-SPECIFIC RULES - Semantic patterns for AST analysis
+# =============================================================================
+
+ast_rules:
+  python:
+    # Hardcoded Secrets Detection
+    - name: hardcoded_password
+      type: assignment
+      pattern:
+        variable_contains: [password, passwd, pwd, secret, api_key, apikey, token, auth]
+        value_type: string
+        value_length_min: 8
+      severity: High
+      confidence: 0.85
+      
+    - name: hardcoded_private_key
+      type: assignment
+      pattern:
+        value_contains: ["-----BEGIN", "PRIVATE KEY"]
+      severity: Critical
+      confidence: 0.95
+      
+    # Insecure Random
+    - name: insecure_random
+      type: call
+      pattern:
+        function: [random.random, random.randint, random.choice, random.shuffle]
+        context_keywords: [password, token, secret, key, salt, nonce, csrf]
+      severity: Medium
+      confidence: 0.7
+      
+    # Debug Mode
+    - name: debug_enabled
+      type: assignment
+      pattern:
+        variable_contains: [debug, DEBUG]
+        value: [True, true, 1]
+      severity: Medium
+      confidence: 0.8
+      
+    # SSL Verification Disabled
+    - name: ssl_disabled
+      type: call
+      pattern:
+        function: [requests.get, requests.post]
+        keyword_arg:
+          name: verify
+          value: False
+      severity: High
+      confidence: 0.9
+
+  javascript:
+    # Hardcoded Secrets
+    - name: hardcoded_secret
+      type: assignment
+      pattern:
+        variable_contains: [password, apiKey, secretKey, token, auth, private]
+        value_type: string
+        value_length_min: 8
+      severity: High
+      confidence: 0.85
+      
+    # JWT with None Algorithm
+    - name: jwt_none_algorithm
+      type: call
+      pattern:
+        function: [jwt.sign, jwt.verify]
+        argument_contains: ["none", "None"]
+      severity: Critical
+      confidence: 0.95
+      
+    # Insecure Cookie
+    - name: insecure_cookie
+      type: property
+      pattern:
+        property: [httpOnly, secure, sameSite]
+        value: [false, False, "none"]
+      severity: Medium
+      confidence: 0.8
+      
+    # Open Redirect
+    - name: open_redirect
+      type: call
+      pattern:
+        function: [res.redirect, location.href, location.assign]
+        argument_from_source: true
+      severity: High
+      confidence: 0.85
+
+# =============================================================================
+# EDTECH-SPECIFIC AST RULES
+# =============================================================================
+
+edtech_ast_rules:
+  # Student Data Exposure
+  - name: student_pii_in_logs
+    languages: [python, javascript]
+    type: call
+    pattern:
+      function_any: [console.log, print, logging.info, logger.debug]
+      argument_contains: [student, cnic, ssn, dob, parent, guardian, address]
+    severity: High
+    compliance: [FERPA, COPPA]
+    
+  # Exam Answer Leakage
+  - name: exam_answers_client_side
+    languages: [javascript]
+    type: assignment
+    pattern:
+      variable_contains: [answer, correct, solution]
+      scope: client
+    severity: Critical
+    
+  # AI Prompt Injection
+  - name: unsanitized_prompt
+    languages: [python, javascript]
+    type: call
+    pattern:
+      function_any: [openai.ChatCompletion.create, llm.generate, model.predict]
+      argument_from_source: true
+      no_sanitizer: true
+    severity: High
+    
+  # Unprotected Exam Endpoint
+  - name: unprotected_exam_route
+    languages: [python]
+    type: function_def
+    pattern:
+      decorator_any: [app.route, router.get, router.post]
+      name_contains: [exam, grade, score, submit, assessment]
+      missing_decorator: [login_required, jwt_required, auth_required]
+    severity: High

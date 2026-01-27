@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.env
+.venv
+env/
+venv/
+ENV/
+
+# IDE
+.idea/
+*.swp
+*.swo
+.vs/
+
+# Project specific
+.sastify_cache/
+*.sarif
+*.log
+sastify-report.html
+sastify-results.sarif
+
+# Node (Frontend)
+Frontend/vscode-extension/node_modules/
+Frontend/web-dashboard/node_modules/
+Backend/parsers/node_modules/
+*.vsix
+
+# Generated files (optional - comment out if you want to keep these)
+# SASTify_*.png
+# SASTify_*.docx
+
+# Cache
+.pytest_cache/
+.mypy_cache/

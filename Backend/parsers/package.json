@@ -1,0 +1,16 @@
+{
+    "name": "sastify-parsers",
+    "version": "1.0.0",
+    "description": "Node.js parsers for SASTify Frontend Analysis",
+    "main": "parse_frontend.js",
+    "scripts": {
+        "test": "echo \"Error: no test specified\" && exit 1"
+    },
+    "dependencies": {
+        "@angular-eslint/template-parser": "^17.3.0",
+        "@babel/parser": "^7.24.0",
+        "espree": "^11.0.0",
+        "glob": "^10.3.10",
+        "vue-eslint-parser": "^9.4.2"
+    }
+}

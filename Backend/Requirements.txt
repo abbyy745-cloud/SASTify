@@ -1,0 +1,19 @@
+fastapi==0.109.0
+uvicorn==0.27.0
+slowapi==0.1.9
+requests==2.31.0
+python-dotenv==1.0.0
+werkzeug==2.3.7
+jsonschema==4.19.0
+astroid==2.15.5
+esprima==4.0.1
+colorama==0.4.6
+redis==5.0.1
+
+# Tree-sitter for AST parsing (optional, enables deep analysis for mobile languages)
+tree-sitter>=0.20.0
+
+# Mobile language grammars (optional, graceful fallback if not installed)
+# tree-sitter-swift  # pip install tree-sitter-swift
+# tree-sitter-kotlin # pip install tree-sitter-kotlin  
+# tree-sitter-dart   # pip install tree-sitter-dart

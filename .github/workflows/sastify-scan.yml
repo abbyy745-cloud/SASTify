@@ -1,0 +1,138 @@
+# SASTify Example Workflow
+# Add this to your repository's .github/workflows/ directory
+
+name: SASTify Security Scan
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Run weekly on Monday at 9am UTC
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  security-scan:
+    name: Security Analysis
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for better analysis
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install SASTify
+        run: |
+          pip install -r requirements.txt 2>/dev/null || pip install fastapi uvicorn esprima colorama
+
+      - name: Run SASTify Security Scan
+        id: sastify
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          python -m Backend.cli scan . \
+            --format sarif \
+            --output sastify-results.sarif \
+            --exclude "**/node_modules/**,**/vendor/**,**/.git/**,**/dist/**" \
+            --fail-on critical,high \
+            --ai-analysis \
+            --max-ai-issues 30 \
+            --verbose
+        continue-on-error: true
+
+      - name: Upload SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: sastify-results.sarif
+          category: SASTify
+
+      - name: Generate HTML Report
+        if: always()
+        run: |
+          python -m Backend.cli scan . \
+            --format html \
+            --output sastify-report.html
+
+      - name: Upload Security Report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-report
+          path: |
+            sastify-results.sarif
+            sastify-report.html
+          retention-days: 30
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            
+            // Read SARIF file
+            let summary = '## 🔒 SASTify Security Scan Results\n\n';
+            
+            try {
+              const sarif = JSON.parse(fs.readFileSync('sastify-results.sarif', 'utf8'));
+              const results = sarif.runs[0].results || [];
+              
+              const critical = results.filter(r => r.level === 'error' && r.properties?.['security-severity'] >= 9).length;
+              const high = results.filter(r => r.level === 'error').length - critical;
+              const medium = results.filter(r => r.level === 'warning').length;
+              const low = results.filter(r => r.level === 'note').length;
+              
+              if (results.length === 0) {
+                summary += '✅ **No security issues found!**\n';
+              } else {
+                summary += `| Severity | Count |\n|----------|-------|\n`;
+                summary += `| 🔴 Critical | ${critical} |\n`;
+                summary += `| 🟠 High | ${high} |\n`;
+                summary += `| 🟡 Medium | ${medium} |\n`;
+                summary += `| 🟢 Low | ${low} |\n\n`;
+                summary += `**Total Issues:** ${results.length}\n\n`;
+                
+                // Show top 5 issues
+                if (results.length > 0) {
+                  summary += '### Top Issues\n\n';
+                  results.slice(0, 5).forEach((r, i) => {
+                    const loc = r.locations?.[0]?.physicalLocation;
+                    const file = loc?.artifactLocation?.uri || 'unknown';
+                    const line = loc?.region?.startLine || '?';
+                    summary += `${i + 1}. **${r.ruleId}** - ${r.message.text.substring(0, 80)}...\n`;
+                    summary += `   📁 \`${file}:${line}\`\n`;
+                  });
+                }
+              }
+            } catch (e) {
+              summary += '⚠️ Could not parse scan results.\n';
+            }
+            
+            summary += '\n---\n*Powered by [SASTify](https://github.com/yourusername/sastify)*';
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });
+
+      - name: Check for Failures
+        if: steps.sastify.outcome == 'failure'
+        run: |
+          echo "::error::Security scan found critical or high severity issues!"
+          exit 1
