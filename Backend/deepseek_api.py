@@ -30,47 +30,79 @@ class SecureDeepSeekAPI:
             "model": "deepseek-coder",
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.1,
-            "max_tokens": 3000,
+            "max_tokens": 2000,  # Reduced for faster responses
             "stream": False
         }
         
-        try:
-            response = requests.post(self.base_url, headers=headers, json=data, timeout=30)
-            response.raise_for_status()
-            
-            result = response.json()
-            self.last_request_time = time.time()
-            
-            # Extract and sanitize the response
+        # Retry logic with exponential backoff
+        max_retries = 3
+        base_delay = 2  # seconds
+        
+        for attempt in range(max_retries):
             try:
-                if 'choices' in result and len(result['choices']) > 0:
-                    ai_response = result['choices'][0]['message']['content']
-                    return self._parse_and_sanitize_response(ai_response)
-                else:
-                    print(f"Unexpected API response format: {result}")
+                response = requests.post(
+                    self.base_url, 
+                    headers=headers, 
+                    json=data, 
+                    timeout=90  # Increased timeout for CI environments
+                )
+                response.raise_for_status()
+                
+                result = response.json()
+                self.last_request_time = time.time()
+                
+                # Extract and sanitize the response
+                try:
+                    if 'choices' in result and len(result['choices']) > 0:
+                        ai_response = result['choices'][0]['message']['content']
+                        return self._parse_and_sanitize_response(ai_response)
+                    else:
+                        print(f"Unexpected API response format: {result}")
+                        return {
+                            'error': 'Unexpected API response format',
+                            'suggested_fix': 'Unable to generate fix',
+                            'explanation': 'The AI service returned an unexpected response format.',
+                            'confidence': 0.0
+                        }
+                except (KeyError, IndexError, TypeError) as e:
+                    print(f"Error parsing API response: {e}")
                     return {
-                        'error': 'Unexpected API response format',
+                        'error': 'Failed to parse AI response',
                         'suggested_fix': 'Unable to generate fix',
-                        'explanation': 'The AI service returned an unexpected response format.',
+                        'explanation': 'Error parsing the AI service response.',
                         'confidence': 0.0
                     }
-            except (KeyError, IndexError, TypeError) as e:
-                print(f"Error parsing API response: {e}")
+                
+            except requests.exceptions.Timeout as e:
+                wait_time = base_delay * (2 ** attempt)
+                if attempt < max_retries - 1:
+                    print(f"DeepSeek API timeout (attempt {attempt + 1}/{max_retries}), retrying in {wait_time}s...")
+                    time.sleep(wait_time)
+                else:
+                    print(f"DeepSeek API timeout after {max_retries} attempts: {e}")
+                    return {
+                        'error': 'API request timed out',
+                        'suggested_fix': 'Unable to generate fix - API timeout',
+                        'explanation': 'The AI service timed out. Please review the code manually.',
+                        'confidence': 0.0
+                    }
+                    
+            except requests.exceptions.RequestException as e:
+                print(f"DeepSeek API error: {e}")
                 return {
-                    'error': 'Failed to parse AI response',
-                    'suggested_fix': 'Unable to generate fix',
-                    'explanation': 'Error parsing the AI service response.',
+                    'error': 'API request failed',
+                    'suggested_fix': 'Unable to generate fix at this time',
+                    'explanation': 'Please review the code manually',
                     'confidence': 0.0
                 }
-            
-        except requests.exceptions.RequestException as e:
-            print(f"DeepSeek API error: {e}")
-            return {
-                'error': 'API request failed',
-                'suggested_fix': 'Unable to generate fix at this time',
-                'explanation': 'Please review the code manually',
-                'confidence': 0.0
-            }
+        
+        # Should not reach here, but just in case
+        return {
+            'error': 'Unknown error',
+            'suggested_fix': 'Unable to generate fix',
+            'explanation': 'An unexpected error occurred.',
+            'confidence': 0.0
+        }
     
     def _build_secure_prompt(self, code_snippet: str, language: str, vulnerability_type: str, context: Dict) -> str:
         """Build a comprehensive prompt for detailed security analysis"""

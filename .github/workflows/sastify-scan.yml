@@ -50,7 +50,7 @@ jobs:
             --exclude "**/node_modules/**,**/vendor/**,**/.git/**,**/dist/**" \
             --fail-on critical,high \
             --ai-analysis \
-            --max-ai-issues 30 \
+            --max-ai-issues 15 \
             --verbose
         continue-on-error: true
 
@@ -72,7 +72,7 @@ jobs:
             --output sastify-report.html \
             --exclude "**/node_modules/**,**/vendor/**,**/.git/**,**/dist/**" \
             --ai-analysis \
-            --max-ai-issues 30 \
+            --max-ai-issues 15 \
             --test-report test-cases.html \
             --verbose
 
