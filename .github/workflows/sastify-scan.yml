@@ -60,6 +60,7 @@ jobs:
         with:
           sarif_file: sastify-results.sarif
           category: SASTify
+        continue-on-error: true
 
       - name: Generate HTML Report
         if: always()
