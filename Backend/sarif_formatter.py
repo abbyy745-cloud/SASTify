@@ -291,8 +291,7 @@ class SarifFormatter:
                 "rules": rules,
                 "supportedTaxonomies": [{
                     "name": "CWE",
-                    "guid": "a]caf6c8-9b95-4e91-8721-91a7b0b8d0f7",
-                    "organizationUri": "https://cwe.mitre.org"
+                    "guid": "a0caf6c8-9b95-4e91-8721-91a7b0b8d0f7"
                 }]
             }
         }
@@ -356,20 +355,17 @@ class SarifFormatter:
                     result["properties"]["ai_suggested_tests"] = vuln['ai_test_suggestions']
             
             # Add fix suggestions - prioritize AI fix if available
-            fixes = []
+            # Note: SARIF fixes must include artifactChanges, so we add as properties instead
+            fix_suggestions = []
             if vuln.get('ai_fix_suggestion'):
-                fixes.append({
-                    "description": {"text": f"AI Suggested Fix: {vuln['ai_fix_suggestion']}"}
-                })
+                fix_suggestions.append(f"AI Suggested Fix: {vuln['ai_fix_suggestion']}")
             
             remediation = vuln.get('remediation')
             if remediation:
-                fixes.append({
-                    "description": {"text": remediation}
-                })
+                fix_suggestions.append(remediation)
             
-            if fixes:
-                result["fixes"] = fixes
+            if fix_suggestions:
+                result["properties"]["fix_suggestions"] = fix_suggestions
             
             # Add related locations for cross-file vulnerabilities
             if vuln.get('source_file') and vuln.get('sink_file'):
@@ -425,8 +421,14 @@ class SarifFormatter:
         return hashlib.sha256(fp_data.encode()).hexdigest()[:32]
     
     def _cwe_to_guid(self, cwe_id: str) -> str:
-        """Convert CWE ID to a deterministic GUID"""
-        return hashlib.md5(cwe_id.encode()).hexdigest()
+        """Convert CWE ID to a deterministic GUID in valid UUID v4 format"""
+        # Generate a deterministic hash from the CWE ID
+        hash_hex = hashlib.md5(cwe_id.encode()).hexdigest()
+        # Format as UUID with proper version (4) and variant (8/9/a/b) bits
+        # UUID format: xxxxxxxx-xxxx-Mxxx-Nxxx-xxxxxxxxxxxx
+        # M = version (4 for random), N = variant (8, 9, a, or b)
+        guid = f"{hash_hex[0:8]}-{hash_hex[8:12]}-4{hash_hex[13:16]}-a{hash_hex[17:20]}-{hash_hex[20:32]}"
+        return guid
 
 
 def to_sarif(scan_results: Dict, filename: str = None) -> str:
