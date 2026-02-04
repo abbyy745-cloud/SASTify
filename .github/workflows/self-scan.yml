@@ -84,7 +84,7 @@ jobs:
           cd Backend
           AI_FLAG=""
           if [ "${{ github.event.inputs.ai_analysis || 'true' }}" == "true" ] && [ -n "$DEEPSEEK_API_KEY" ]; then
-            AI_FLAG="--ai-analysis --max-ai-issues ${{ github.event.inputs.max_ai_issues || '30' }}"
+            AI_FLAG="--ai-analysis --max-ai-issues ${{ github.event.inputs.max_ai_issues || '30' }} --test-report ../test-cases.html"
             echo "🤖 AI analysis enabled"
           else
             echo "ℹ️ AI analysis disabled (no API key or disabled)"
@@ -135,6 +135,7 @@ jobs:
             sastify-results.sarif
             security-report.html
             security-report.json
+            test-cases.html
             scan-output.txt
           retention-days: 30
 

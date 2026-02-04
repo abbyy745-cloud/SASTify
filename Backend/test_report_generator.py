@@ -91,30 +91,32 @@ class TestReportGenerator:
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
         :root {{
-            --bg-primary: #0f0f14;
-            --bg-secondary: #16161d;
-            --bg-card: rgba(255, 255, 255, 0.03);
-            --bg-glass: rgba(255, 255, 255, 0.05);
-            --text-primary: #f0f0f5;
-            --text-secondary: #8888a0;
-            --text-muted: #555566;
+            --bg-primary: #f8fafc;
+            --bg-secondary: #ffffff;
+            --bg-card: #ffffff;
+            --bg-glass: #f1f5f9;
+            --text-primary: #1e293b;
+            --text-secondary: #64748b;
+            --text-muted: #94a3b8;
             --accent-primary: #10b981;
             --accent-secondary: #34d399;
-            --accent-gradient: linear-gradient(135deg, #10b981 0%, #34d399 50%, #6ee7b7 100%);
-            --critical: #ef4444;
-            --high: #f97316;
-            --medium: #eab308;
-            --low: #3b82f6;
-            --unit: #3b82f6;
-            --security: #ef4444;
-            --integration: #8b5cf6;
-            --border-subtle: rgba(255, 255, 255, 0.08);
+            --accent-gradient: linear-gradient(135deg, #10b981 0%, #34d399 100%);
+            --critical: #dc2626;
+            --high: #ea580c;
+            --medium: #ca8a04;
+            --low: #2563eb;
+            --unit: #2563eb;
+            --security: #dc2626;
+            --integration: #7c3aed;
+            --border: #e2e8f0;
+            --shadow: 0 1px 3px rgba(0,0,0,0.1), 0 1px 2px rgba(0,0,0,0.06);
+            --shadow-lg: 0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -2px rgba(0,0,0,0.05);
         }}
         
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         
         body {{
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             background: var(--bg-primary);
             color: var(--text-primary);
             min-height: 100vh;
@@ -122,31 +124,25 @@ class TestReportGenerator:
         }}
         
         .container {{
-            max-width: 1200px;
+            max-width: 1000px;
             margin: 0 auto;
             padding: 2rem;
         }}
         
         .header {{
             text-align: center;
-            padding: 2rem 0 3rem;
-            border-bottom: 1px solid var(--border-subtle);
+            padding: 2rem 0;
             margin-bottom: 2rem;
         }}
         
         .logo {{
-            font-size: 2.5rem;
+            font-size: 2rem;
             font-weight: 700;
             background: var(--accent-gradient);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
             margin-bottom: 0.5rem;
-        }}
-        
-        .logo::before {{
-            content: '🧪 ';
-            -webkit-text-fill-color: initial;
         }}
         
         .subtitle {{
@@ -157,77 +153,81 @@ class TestReportGenerator:
         .timestamp {{
             color: var(--text-muted);
             font-size: 0.85rem;
-            margin-top: 0.75rem;
+            margin-top: 0.5rem;
         }}
         
         /* Stats */
         .stats-grid {{
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
             gap: 1rem;
-            margin-bottom: 2.5rem;
+            margin-bottom: 1.5rem;
         }}
         
         .stat-card {{
-            background: var(--bg-glass);
-            border: 1px solid var(--border-subtle);
-            border-radius: 12px;
-            padding: 1.25rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 1rem;
             text-align: center;
+            box-shadow: var(--shadow);
         }}
         
-        .stat-card.unit {{ border-left: 3px solid var(--unit); }}
-        .stat-card.security {{ border-left: 3px solid var(--security); }}
-        .stat-card.integration {{ border-left: 3px solid var(--integration); }}
+        .stat-card.unit {{ border-top: 3px solid var(--unit); }}
+        .stat-card.security {{ border-top: 3px solid var(--security); }}
+        .stat-card.integration {{ border-top: 3px solid var(--integration); }}
         
         .stat-value {{
-            font-size: 2rem;
+            font-size: 1.75rem;
             font-weight: 700;
         }}
         
         .stat-label {{
             color: var(--text-secondary);
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             text-transform: uppercase;
-            letter-spacing: 1px;
+            letter-spacing: 0.5px;
             margin-top: 0.25rem;
         }}
         
         /* Quick Actions */
         .quick-actions {{
             display: flex;
-            gap: 1rem;
-            margin-bottom: 2rem;
+            gap: 0.75rem;
+            margin-bottom: 1.5rem;
             flex-wrap: wrap;
         }}
         
         .action-btn {{
-            background: var(--bg-glass);
-            border: 1px solid var(--border-subtle);
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
             color: var(--text-primary);
-            padding: 0.75rem 1.5rem;
+            padding: 0.6rem 1.25rem;
             border-radius: 8px;
-            font-size: 0.9rem;
+            font-size: 0.85rem;
             cursor: pointer;
             transition: all 0.2s ease;
             display: flex;
             align-items: center;
             gap: 0.5rem;
+            box-shadow: var(--shadow);
         }}
         
         .action-btn:hover {{
             background: var(--accent-primary);
             border-color: var(--accent-primary);
+            color: white;
         }}
         
         .action-btn.primary {{
-            background: var(--accent-gradient);
-            border: none;
+            background: var(--accent-primary);
+            border-color: var(--accent-primary);
+            color: white;
         }}
         
         /* Vulnerability Group */
         .vuln-group {{
-            margin-bottom: 2rem;
+            margin-bottom: 1.5rem;
         }}
         
         .group-header {{
@@ -235,10 +235,11 @@ class TestReportGenerator:
             align-items: center;
             gap: 1rem;
             padding: 1rem;
-            background: var(--bg-glass);
-            border: 1px solid var(--border-subtle);
-            border-radius: 12px 12px 0 0;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 10px 10px 0 0;
             cursor: pointer;
+            box-shadow: var(--shadow);
         }}
         
         .group-header:hover {{
@@ -246,7 +247,7 @@ class TestReportGenerator:
         }}
         
         .group-title {{
-            font-size: 1.1rem;
+            font-size: 1rem;
             font-weight: 600;
             flex: 1;
         }}
@@ -254,9 +255,9 @@ class TestReportGenerator:
         .group-count {{
             background: var(--accent-primary);
             color: white;
-            font-size: 0.75rem;
+            font-size: 0.7rem;
             font-weight: 600;
-            padding: 0.25rem 0.75rem;
+            padding: 0.2rem 0.6rem;
             border-radius: 999px;
         }}
         
@@ -271,11 +272,11 @@ class TestReportGenerator:
         
         .group-content {{
             display: none;
-            border: 1px solid var(--border-subtle);
+            border: 1px solid var(--border);
             border-top: none;
-            border-radius: 0 0 12px 12px;
+            border-radius: 0 0 10px 10px;
             padding: 1rem;
-            background: var(--bg-secondary);
+            background: var(--bg-glass);
         }}
         
         .group-content.show {{
@@ -284,11 +285,12 @@ class TestReportGenerator:
         
         /* Test Case Card */
         .test-card {{
-            background: var(--bg-card);
-            border: 1px solid var(--border-subtle);
-            border-radius: 10px;
-            margin-bottom: 1rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin-bottom: 0.75rem;
             overflow: hidden;
+            box-shadow: var(--shadow);
         }}
         
         .test-card:last-child {{
@@ -298,16 +300,16 @@ class TestReportGenerator:
         .test-header {{
             display: flex;
             align-items: center;
-            gap: 1rem;
-            padding: 1rem;
+            gap: 0.75rem;
+            padding: 0.75rem 1rem;
             background: var(--bg-glass);
             flex-wrap: wrap;
         }}
         
         .test-type-badge {{
-            font-size: 0.65rem;
+            font-size: 0.6rem;
             font-weight: 600;
-            padding: 0.3rem 0.6rem;
+            padding: 0.2rem 0.5rem;
             border-radius: 4px;
             text-transform: uppercase;
         }}
@@ -319,11 +321,12 @@ class TestReportGenerator:
         .test-name {{
             font-weight: 500;
             flex: 1;
+            font-size: 0.95rem;
         }}
         
         .test-source {{
             font-family: 'JetBrains Mono', monospace;
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--text-muted);
         }}
         
@@ -333,14 +336,13 @@ class TestReportGenerator:
         
         .test-desc {{
             color: var(--text-secondary);
-            margin-bottom: 1rem;
-            font-size: 0.95rem;
+            margin-bottom: 0.75rem;
+            font-size: 0.9rem;
         }}
         
         /* Code Block */
         .code-block {{
-            background: #0a0a0e;
-            border: 1px solid var(--border-subtle);
+            background: #1e293b;
             border-radius: 8px;
             overflow: hidden;
             margin: 0.75rem 0;
@@ -351,23 +353,23 @@ class TestReportGenerator:
             justify-content: space-between;
             align-items: center;
             padding: 0.5rem 1rem;
-            background: rgba(255, 255, 255, 0.02);
-            border-bottom: 1px solid var(--border-subtle);
+            background: #334155;
+            border-bottom: 1px solid #475569;
         }}
         
         .code-lang {{
-            font-size: 0.7rem;
-            color: var(--text-muted);
+            font-size: 0.65rem;
+            color: #94a3b8;
             text-transform: uppercase;
         }}
         
         .copy-btn {{
             background: transparent;
-            border: 1px solid var(--border-subtle);
-            color: var(--text-secondary);
-            padding: 0.25rem 0.6rem;
+            border: 1px solid #475569;
+            color: #94a3b8;
+            padding: 0.2rem 0.5rem;
             border-radius: 4px;
-            font-size: 0.7rem;
+            font-size: 0.65rem;
             cursor: pointer;
             transition: all 0.2s ease;
         }}
@@ -379,55 +381,56 @@ class TestReportGenerator:
         }}
         
         .code-content {{
-            padding: 1rem;
+            padding: 0.75rem 1rem;
             font-family: 'JetBrains Mono', monospace;
-            font-size: 0.85rem;
+            font-size: 0.8rem;
             line-height: 1.5;
             overflow-x: auto;
             white-space: pre-wrap;
-            color: #e0e0e8;
+            color: #e2e8f0;
         }}
         
         /* Test Inputs */
         .test-inputs {{
-            margin-top: 1rem;
-            padding-top: 1rem;
-            border-top: 1px solid var(--border-subtle);
+            margin-top: 0.75rem;
+            padding-top: 0.75rem;
+            border-top: 1px solid var(--border);
         }}
         
         .test-inputs-label {{
-            font-size: 0.8rem;
+            font-size: 0.7rem;
             color: var(--text-muted);
             text-transform: uppercase;
-            letter-spacing: 1px;
+            letter-spacing: 0.5px;
             margin-bottom: 0.5rem;
         }}
         
         .input-tag {{
             display: inline-block;
-            background: rgba(239, 68, 68, 0.15);
-            border: 1px solid rgba(239, 68, 68, 0.3);
+            background: #fef2f2;
+            border: 1px solid #fecaca;
             color: var(--critical);
             font-family: 'JetBrains Mono', monospace;
-            font-size: 0.8rem;
-            padding: 0.3rem 0.6rem;
+            font-size: 0.75rem;
+            padding: 0.25rem 0.5rem;
             border-radius: 4px;
-            margin: 0.25rem;
+            margin: 0.2rem;
         }}
         
         .expected {{
-            margin-top: 0.75rem;
+            margin-top: 0.5rem;
             color: var(--text-secondary);
-            font-size: 0.9rem;
+            font-size: 0.85rem;
         }}
         
         /* Footer */
         .footer {{
             text-align: center;
-            padding: 2rem 0;
+            padding: 1.5rem 0;
             margin-top: 2rem;
-            border-top: 1px solid var(--border-subtle);
+            border-top: 1px solid var(--border);
             color: var(--text-muted);
+            font-size: 0.85rem;
         }}
         
         .footer a {{

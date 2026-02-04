@@ -62,12 +62,19 @@ jobs:
           category: SASTify
         continue-on-error: true
 
-      - name: Generate HTML Report
+      - name: Generate HTML Report with AI Analysis
         if: always()
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: |
           python -m Backend.cli scan . \
             --format html \
-            --output sastify-report.html
+            --output sastify-report.html \
+            --exclude "**/node_modules/**,**/vendor/**,**/.git/**,**/dist/**" \
+            --ai-analysis \
+            --max-ai-issues 30 \
+            --test-report test-cases.html \
+            --verbose
 
       - name: Upload Security Report
         uses: actions/upload-artifact@v4
@@ -77,6 +84,7 @@ jobs:
           path: |
             sastify-results.sarif
             sastify-report.html
+            test-cases.html
           retention-days: 30
 
       - name: Comment on PR
