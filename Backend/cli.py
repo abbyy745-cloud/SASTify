@@ -1527,7 +1527,37 @@ class SASTifyCLI:
     def _print_error(self, message: str):
         """Print error message"""
         print(f"{Fore.RED}✗ Error: {message}{Style.RESET_ALL}", file=sys.stderr)
-
+    
+    def convert_report(self, args: argparse.Namespace) -> int:
+        """Convert an existing JSON report to another format, preserving all AI data"""
+        try:
+            with open(args.input, 'r', encoding='utf-8') as f:
+                report_data = json.load(f)
+            
+            vulnerabilities = report_data.get('vulnerabilities', [])
+            file_count = report_data.get('files_scanned', 0)
+            
+            print(f"{Fore.CYAN}Converting {args.input} → {args.format} ({len(vulnerabilities)} vulnerabilities, "
+                  f"{sum(1 for v in vulnerabilities if v.get('ai_analyzed'))} AI-analyzed){Style.RESET_ALL}")
+            
+            # Output in requested format
+            self._output_results(vulnerabilities, args.format, args.output, file_count)
+            
+            # Generate test case report if requested
+            test_report_path = getattr(args, 'test_report', None)
+            if test_report_path and vulnerabilities:
+                if TEST_REPORT_AVAILABLE:
+                    generator = TestReportGenerator()
+                    if generator.generate_report(vulnerabilities, test_report_path):
+                        print(f"{Fore.GREEN}Test case report saved to: {test_report_path}{Style.RESET_ALL}")
+                    else:
+                        print(f"{Fore.YELLOW}No test cases to include in report{Style.RESET_ALL}")
+            
+            return EXIT_SUCCESS
+            
+        except Exception as e:
+            self._print_error(f"Conversion failed: {str(e)}")
+            return EXIT_ERROR
 
 def create_config():
     """Create a sample configuration file"""
@@ -1616,6 +1646,17 @@ Examples:
     # Init command
     init_parser = subparsers.add_parser('init', help='Create configuration file')
     
+    # Convert command - convert an existing JSON report to other formats
+    convert_parser = subparsers.add_parser('convert', help='Convert a JSON report to another format (preserves AI data)')
+    convert_parser.add_argument('input', help='Path to input JSON report')
+    convert_parser.add_argument('-f', '--format',
+                               choices=['html', 'sarif', 'table', 'summary'],
+                               required=True,
+                               help='Output format')
+    convert_parser.add_argument('-o', '--output', help='Output file path')
+    convert_parser.add_argument('--test-report',
+                               help='Generate a separate test cases HTML report at this path')
+    
     # Version
     parser.add_argument('--version', action='version', version='SASTify 1.0.0')
     
@@ -1624,6 +1665,9 @@ Examples:
     if args.command == 'scan':
         cli = SASTifyCLI()
         sys.exit(cli.run(args))
+    elif args.command == 'convert':
+        cli = SASTifyCLI()
+        sys.exit(cli.convert_report(args))
     elif args.command == 'init':
         create_config()
     else:

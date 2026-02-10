@@ -85,19 +85,16 @@ jobs:
             $AI_FLAG \
             --verbose 2>&1 | tee ../scan-output.txt
           
-          # HTML report (reuses same scan, no AI re-analysis)
-          python cli.py scan .. \
+          # Convert JSON → HTML (preserves all AI analysis, explanations, and fixes)
+          python cli.py convert ../security-report.json \
             --format html \
             --output ../security-report.html \
-            --exclude "**/node_modules/**,**/__pycache__/**,**/tests/**,**/.git/**" \
-            --languages python,javascript,typescript
+            --test-report ../test-cases.html
           
-          # SARIF report (reuses same scan, no AI re-analysis)
-          python cli.py scan .. \
+          # Convert JSON → SARIF (for GitHub Security tab)
+          python cli.py convert ../security-report.json \
             --format sarif \
-            --output ../sastify-results.sarif \
-            --exclude "**/node_modules/**,**/__pycache__/**,**/tests/**,**/.git/**" \
-            --languages python,javascript,typescript
+            --output ../sastify-results.sarif
         continue-on-error: true
 
       - name: Upload SARIF to GitHub Security
