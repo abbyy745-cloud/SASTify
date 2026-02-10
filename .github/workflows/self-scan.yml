@@ -22,7 +22,7 @@ on:
         required: false
         default: '10'
         type: string
-      ai_mode:
+      ai-mode:
         description: 'AI mode: fast (concise, ~3 min) or full (comprehensive, ~15 min)'
         required: false
         default: 'fast'
@@ -30,6 +30,11 @@ on:
         options:
           - fast
           - full
+      generate_test_cases:
+        description: 'Generate separate AI-suggested test cases report'
+        required: false
+        default: 'false'
+        type: boolean
 
 permissions:
   contents: read
@@ -68,9 +73,20 @@ jobs:
           cd Backend
           
           AI_FLAG=""
+          TEST_REPORT_FLAG=""
+          
           if [ "${{ github.event.inputs.ai_analysis || 'true' }}" == "true" ] && [ -n "$DEEPSEEK_API_KEY" ]; then
             AI_MODE="${{ github.event.inputs.ai_mode || 'fast' }}"
-            AI_FLAG="--ai-analysis --max-ai-issues ${{ github.event.inputs.max_ai_issues || '10' }} --ai-mode $AI_MODE --test-report ../test-cases.html"
+            
+            # Basic AI flags
+            AI_FLAG="--ai-analysis --max-ai-issues ${{ github.event.inputs.max_ai_issues || '10' }} --ai-mode $AI_MODE"
+            
+            # Optional test cases report
+            if [ "${{ github.event.inputs.generate_test_cases }}" == "true" ]; then
+                TEST_REPORT_FLAG="--test-report ../test-cases.html"
+                echo "🧪 Test case generation enabled"
+            fi
+            
             echo "🤖 AI analysis enabled (mode: $AI_MODE)"
           else
             echo "ℹ️ AI analysis disabled (no API key or disabled)"
@@ -89,7 +105,7 @@ jobs:
           python cli.py convert ../security-report.json \
             --format html \
             --output ../security-report.html \
-            --test-report ../test-cases.html
+            $TEST_REPORT_FLAG
           
           # Convert JSON → SARIF (for GitHub Security tab)
           python cli.py convert ../security-report.json \
