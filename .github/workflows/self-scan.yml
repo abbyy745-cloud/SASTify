@@ -76,23 +76,23 @@ jobs:
             echo "ℹ️ AI analysis disabled (no API key or disabled)"
           fi
           
-          # JSON report (primary — contains all data including AI analysis)
+          # HTML report (primary — contains Al analysis)
           python cli.py scan .. \
-            --format json \
-            --output ../security-report.json \
+            --format html \
+            --output ../security-report.html \
             --exclude "**/node_modules/**,**/__pycache__/**,**/tests/**,**/.git/**" \
             --languages python,javascript,typescript \
             $AI_FLAG \
             --verbose 2>&1 | tee ../scan-output.txt
           
-          # HTML report (reuses same scan, no AI re-analysis)
+          # JSON report (fast, no AI)
           python cli.py scan .. \
-            --format html \
-            --output ../security-report.html \
+            --format json \
+            --output ../security-report.json \
             --exclude "**/node_modules/**,**/__pycache__/**,**/tests/**,**/.git/**" \
             --languages python,javascript,typescript
-          
-          # SARIF report (reuses same scan, no AI re-analysis)
+
+          # SARIF report (fast, no AI)
           python cli.py scan .. \
             --format sarif \
             --output ../sastify-results.sarif \
