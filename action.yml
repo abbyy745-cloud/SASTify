@@ -45,7 +45,7 @@ inputs:
   generate-test-cases:
     description: 'Generate a separate HTML report with AI-suggested test cases'
     required: false
-    default: 'false'
+    default: 'true'
   upload-sarif:
     description: 'Upload SARIF results to GitHub Security tab'
     required: false

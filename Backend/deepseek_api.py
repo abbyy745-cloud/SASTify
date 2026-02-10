@@ -142,6 +142,14 @@ Return ONLY this JSON:
     "risk_level": "Low/Medium/High/Critical",
     "explanation": "1-2 sentence explanation",
     "suggested_fix": "The corrected code",
+    "suggested_test_cases": [
+        {
+            "type": "unit",
+            "name": "Test Name",
+            "description": "Short description",
+            "code": "Runnable test code"
+        }
+    ],
     "false_positive_reason": "If false positive, explain why"
 }}"""
 

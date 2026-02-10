@@ -33,7 +33,7 @@ on:
       generate_test_cases:
         description: 'Generate separate AI-suggested test cases report'
         required: false
-        default: 'false'
+        default: 'true'
         type: boolean
 
 permissions:
