@@ -91,13 +91,24 @@ class SASTifyCLI:
             ai_analyzer = None
             if getattr(args, 'ai_analysis', False):
                 api_key = getattr(args, 'api_key', None) or os.getenv('DEEPSEEK_API_KEY')
+                
+                # DEBUG: Print status
+                print(f"DEBUG: AI Analysis Requested. Available={AI_AVAILABLE}, Key={'Present' if api_key else 'Missing'}")
+                
                 if api_key and AI_AVAILABLE:
-                    ai_analyzer = SecureDeepSeekAPI(api_key=api_key)
-                    if args.verbose:
-                        print(f"{Fore.CYAN}AI analysis enabled{Style.RESET_ALL}")
+                    try:
+                        ai_analyzer = SecureDeepSeekAPI(api_key=api_key)
+                        if args.verbose:
+                            print(f"{Fore.CYAN}AI analysis enabled{Style.RESET_ALL}")
+                    except Exception as e:
+                        print(f"DEBUG: Failed to init DeepSeekAPI: {e}")
                 elif not AI_AVAILABLE:
-                    if args.verbose:
-                        print(f"{Fore.YELLOW}Warning: AI analysis requested but deepseek_api module not available{Style.RESET_ALL}")
+                    print(f"{Fore.YELLOW}Warning: AI analysis requested but deepseek_api module not available.{Style.RESET_ALL}")
+                    # Try to import manually to see error
+                    try:
+                        import deepseek_api
+                    except ImportError as e:
+                        print(f"DEBUG: Import error details: {e}")
                 else:
                     if args.verbose:
                         print(f"{Fore.YELLOW}Warning: AI analysis requested but no API key provided{Style.RESET_ALL}")
