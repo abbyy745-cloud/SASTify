@@ -362,7 +362,7 @@ class SASTifyCLI:
             ai_results = ai_analyzer.analyze_vulnerabilities_batch(
                 batch_items,
                 ai_mode=ai_mode,
-                max_workers=5,
+                max_workers=3,
                 verbose=verbose
             )
         except Exception as e:

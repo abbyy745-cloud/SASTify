@@ -22,10 +22,10 @@ class SecureDeepSeekAPI:
         
         if ai_mode == 'fast':
             prompt = self._build_fast_prompt(code_snippet, language, vulnerability_type, context)
-            max_tokens = 600
+            max_tokens = 1200
         else:
             prompt = self._build_secure_prompt(code_snippet, language, vulnerability_type, context)
-            max_tokens = 1200
+            max_tokens = 2500
         
         headers = {
             "Content-Type": "application/json",
@@ -50,7 +50,7 @@ class SecureDeepSeekAPI:
                     self.base_url, 
                     headers=headers, 
                     json=data, 
-                    timeout=45
+                    timeout=90
                 )
                 response.raise_for_status()
                 
