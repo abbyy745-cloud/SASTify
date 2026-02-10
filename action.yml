@@ -37,7 +37,11 @@ inputs:
   max-ai-issues:
     description: 'Maximum number of issues to analyze with AI'
     required: false
-    default: '20'
+    default: '10'
+  ai-mode:
+    description: 'AI analysis mode: fast (concise, quick) or full (comprehensive, slower)'
+    required: false
+    default: 'fast'
   upload-sarif:
     description: 'Upload SARIF results to GitHub Security tab'
     required: false
@@ -95,6 +99,7 @@ runs:
         if [ "${{ inputs.ai-analysis }}" == "true" ]; then
           ARGS="$ARGS --ai-analysis"
           ARGS="$ARGS --max-ai-issues ${{ inputs.max-ai-issues }}"
+          ARGS="$ARGS --ai-mode ${{ inputs.ai-mode }}"
         fi
         
         # Run scanner

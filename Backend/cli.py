@@ -128,12 +128,14 @@ class SASTifyCLI:
             
             # Run AI analysis if enabled
             if ai_analyzer and all_vulnerabilities:
-                max_issues = getattr(args, 'max_ai_issues', 20)
+                max_issues = getattr(args, 'max_ai_issues', 10)
+                ai_mode = getattr(args, 'ai_mode', 'fast')
                 all_vulnerabilities = self._run_ai_analysis(
                     all_vulnerabilities, 
                     ai_analyzer, 
                     max_issues,
-                    args.verbose
+                    args.verbose,
+                    ai_mode
                 )
             
             # Output results
@@ -287,10 +289,10 @@ class SASTifyCLI:
         return vulnerabilities
     
     def _run_ai_analysis(self, vulnerabilities: List[Dict], ai_analyzer, 
-                         max_issues: int, verbose: bool) -> List[Dict]:
-        """Run AI analysis on vulnerabilities to add explanations and fix suggestions"""
+                         max_issues: int, verbose: bool, ai_mode: str = 'fast') -> List[Dict]:
+        """Run AI analysis on vulnerabilities using concurrent batch processing"""
         if verbose:
-            print(f"\n{Fore.CYAN}Running AI analysis on top {min(len(vulnerabilities), max_issues)} issues...{Style.RESET_ALL}")
+            print(f"\n{Fore.CYAN}Running AI analysis ({ai_mode} mode) on top {min(len(vulnerabilities), max_issues)} issues with concurrent requests...{Style.RESET_ALL}")
         
         # Sort by severity to prioritize critical/high issues
         sorted_vulns = sorted(
@@ -298,75 +300,93 @@ class SASTifyCLI:
             key=lambda v: self.SEVERITY_ORDER.index(v.get('severity', 'medium').lower())
         )
         
-        analyzed_count = 0
+        # Build batch items for concurrent analysis
+        batch_items = []
+        batch_indices = []
+        
         for i, vuln in enumerate(sorted_vulns):
-            if analyzed_count >= max_issues:
+            if len(batch_items) >= max_issues:
                 break
             
-            try:
-                # Read the code context for better AI analysis
-                code_snippet = vuln.get('snippet', '')
-                if not code_snippet and vuln.get('file'):
-                    try:
-                        with open(vuln['file'], 'r', encoding='utf-8', errors='ignore') as f:
-                            lines = f.readlines()
-                            line_num = vuln.get('line', 1) - 1
-                            start = max(0, line_num - 5)
-                            end = min(len(lines), line_num + 10)
-                            code_snippet = ''.join(lines[start:end])
-                    except:
-                        pass
-                
-                if not code_snippet:
-                    continue
-                
-                # Determine language from file extension
-                ext = os.path.splitext(vuln.get('file', ''))[1].lower()
-                language = self.SUPPORTED_LANGUAGES.get(ext, 'unknown')
-                
-                context = {
+            # Read the code context for better AI analysis
+            code_snippet = vuln.get('snippet', '')
+            if not code_snippet and vuln.get('file'):
+                try:
+                    with open(vuln['file'], 'r', encoding='utf-8', errors='ignore') as f:
+                        lines = f.readlines()
+                        line_num = vuln.get('line', 1) - 1
+                        start = max(0, line_num - 5)
+                        end = min(len(lines), line_num + 10)
+                        code_snippet = ''.join(lines[start:end])
+                except:
+                    pass
+            
+            if not code_snippet:
+                continue
+            
+            # Determine language from file extension
+            ext = os.path.splitext(vuln.get('file', ''))[1].lower()
+            language = self.SUPPORTED_LANGUAGES.get(ext, 'unknown')
+            
+            batch_items.append({
+                'code_snippet': code_snippet,
+                'language': language,
+                'vulnerability_type': vuln.get('type', 'unknown'),
+                'context': {
                     'confidence': vuln.get('confidence', 0.8),
                     'severity': vuln.get('severity', 'Medium'),
                     'scanner': vuln.get('scanner', 'unknown'),
                     'line': vuln.get('line', 0)
                 }
-                
-                if verbose:
-                    print(f"  Analyzing: {vuln.get('type', 'unknown')} in {os.path.basename(vuln.get('file', 'unknown'))}")
-                
-                # Call AI API
-                ai_result = ai_analyzer.analyze_vulnerability(
-                    code_snippet, 
-                    language, 
-                    vuln.get('type', 'unknown'),
-                    context
-                )
-                
-                # Add AI results to vulnerability - comprehensive fields
-                vuln['ai_analyzed'] = True
-                vuln['ai_explanation'] = ai_result.get('explanation', '')
-                vuln['ai_detailed_explanation'] = ai_result.get('detailed_explanation', ai_result.get('explanation', ''))
-                vuln['ai_vulnerability_summary'] = ai_result.get('vulnerability_summary', '')
-                vuln['ai_fix_suggestion'] = ai_result.get('suggested_fix', '')
-                vuln['ai_is_false_positive'] = not ai_result.get('is_confirmed_vulnerability', True)
-                vuln['ai_confidence'] = ai_result.get('confidence', 0.5)
-                vuln['ai_risk_level'] = ai_result.get('risk_level', vuln.get('severity', 'Medium'))
-                vuln['ai_test_suggestions'] = ai_result.get('suggested_test_cases', [])
-                
-                # New comprehensive fields
-                vuln['ai_attack_scenario'] = ai_result.get('attack_scenario', {})
-                vuln['ai_impact_analysis'] = ai_result.get('impact_analysis', {})
-                vuln['ai_remediation_steps'] = ai_result.get('remediation_steps', [])
-                vuln['ai_security_references'] = ai_result.get('security_references', [])
-                
-                if vuln['ai_is_false_positive']:
-                    vuln['ai_false_positive_reason'] = ai_result.get('false_positive_reason', '')
-                
-                analyzed_count += 1
-                
-            except Exception as e:
-                if verbose:
-                    print(f"  {Fore.YELLOW}Warning: AI analysis failed for issue {i}: {e}{Style.RESET_ALL}")
+            })
+            batch_indices.append(i)
+        
+        if not batch_items:
+            if verbose:
+                print(f"{Fore.YELLOW}No issues with code snippets to analyze{Style.RESET_ALL}")
+            return sorted_vulns
+        
+        # Run batch analysis concurrently
+        try:
+            ai_results = ai_analyzer.analyze_vulnerabilities_batch(
+                batch_items,
+                ai_mode=ai_mode,
+                max_workers=5,
+                verbose=verbose
+            )
+        except Exception as e:
+            if verbose:
+                print(f"  {Fore.YELLOW}Warning: Batch AI analysis failed: {e}{Style.RESET_ALL}")
+            return sorted_vulns
+        
+        # Apply AI results back to vulnerabilities
+        analyzed_count = 0
+        for batch_idx, vuln_idx in enumerate(batch_indices):
+            ai_result = ai_results[batch_idx]
+            if ai_result is None or ai_result.get('error'):
+                continue
+            
+            vuln = sorted_vulns[vuln_idx]
+            vuln['ai_analyzed'] = True
+            vuln['ai_explanation'] = ai_result.get('explanation', '')
+            vuln['ai_detailed_explanation'] = ai_result.get('detailed_explanation', ai_result.get('explanation', ''))
+            vuln['ai_vulnerability_summary'] = ai_result.get('vulnerability_summary', '')
+            vuln['ai_fix_suggestion'] = ai_result.get('suggested_fix', '')
+            vuln['ai_is_false_positive'] = not ai_result.get('is_confirmed_vulnerability', True)
+            vuln['ai_confidence'] = ai_result.get('confidence', 0.5)
+            vuln['ai_risk_level'] = ai_result.get('risk_level', vuln.get('severity', 'Medium'))
+            vuln['ai_test_suggestions'] = ai_result.get('suggested_test_cases', [])
+            
+            # Comprehensive fields (available in full mode)
+            vuln['ai_attack_scenario'] = ai_result.get('attack_scenario', {})
+            vuln['ai_impact_analysis'] = ai_result.get('impact_analysis', {})
+            vuln['ai_remediation_steps'] = ai_result.get('remediation_steps', [])
+            vuln['ai_security_references'] = ai_result.get('security_references', [])
+            
+            if vuln['ai_is_false_positive']:
+                vuln['ai_false_positive_reason'] = ai_result.get('false_positive_reason', '')
+            
+            analyzed_count += 1
         
         if verbose:
             print(f"{Fore.GREEN}AI analysis completed for {analyzed_count} issues{Style.RESET_ALL}\n")
@@ -1586,8 +1606,10 @@ Examples:
                             help='Enable AI-powered analysis for vulnerabilities')
     scan_parser.add_argument('--api-key',
                             help='DeepSeek API key (or set DEEPSEEK_API_KEY env var)')
-    scan_parser.add_argument('--max-ai-issues', type=int, default=20,
-                            help='Maximum number of issues to analyze with AI (default: 20)')
+    scan_parser.add_argument('--max-ai-issues', type=int, default=10,
+                            help='Maximum number of issues to analyze with AI (default: 10)')
+    scan_parser.add_argument('--ai-mode', choices=['fast', 'full'], default='fast',
+                            help='AI analysis mode: fast (concise) or full (comprehensive) (default: fast)')
     scan_parser.add_argument('--test-report',
                             help='Generate a separate test cases HTML report at this path')
     

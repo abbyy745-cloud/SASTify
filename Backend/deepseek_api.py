@@ -2,6 +2,7 @@ import re
 import requests
 import json
 import time
+import concurrent.futures
 from typing import Dict, List, Optional
 
 class SecureDeepSeekAPI:
@@ -11,7 +12,7 @@ class SecureDeepSeekAPI:
         self.rate_limit_delay = 0.1  # 100ms between requests
         self.last_request_time = 0
         
-    def analyze_vulnerability(self, code_snippet: str, language: str, vulnerability_type: str, context: Dict) -> Dict:
+    def analyze_vulnerability(self, code_snippet: str, language: str, vulnerability_type: str, context: Dict, ai_mode: str = 'fast') -> Dict:
         """Analyze a specific vulnerability and provide fix suggestions"""
         
         # Rate limiting
@@ -19,7 +20,12 @@ class SecureDeepSeekAPI:
         if current_time - self.last_request_time < self.rate_limit_delay:
             time.sleep(self.rate_limit_delay - (current_time - self.last_request_time))
         
-        prompt = self._build_secure_prompt(code_snippet, language, vulnerability_type, context)
+        if ai_mode == 'fast':
+            prompt = self._build_fast_prompt(code_snippet, language, vulnerability_type, context)
+            max_tokens = 600
+        else:
+            prompt = self._build_secure_prompt(code_snippet, language, vulnerability_type, context)
+            max_tokens = 1200
         
         headers = {
             "Content-Type": "application/json",
@@ -30,7 +36,7 @@ class SecureDeepSeekAPI:
             "model": "deepseek-coder",
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.1,
-            "max_tokens": 2000,  # Reduced for faster responses
+            "max_tokens": max_tokens,
             "stream": False
         }
         
@@ -44,7 +50,7 @@ class SecureDeepSeekAPI:
                     self.base_url, 
                     headers=headers, 
                     json=data, 
-                    timeout=90  # Increased timeout for CI environments
+                    timeout=45
                 )
                 response.raise_for_status()
                 
@@ -58,20 +64,10 @@ class SecureDeepSeekAPI:
                         return self._parse_and_sanitize_response(ai_response)
                     else:
                         print(f"Unexpected API response format: {result}")
-                        return {
-                            'error': 'Unexpected API response format',
-                            'suggested_fix': 'Unable to generate fix',
-                            'explanation': 'The AI service returned an unexpected response format.',
-                            'confidence': 0.0
-                        }
+                        return self._error_response('Unexpected API response format')
                 except (KeyError, IndexError, TypeError) as e:
                     print(f"Error parsing API response: {e}")
-                    return {
-                        'error': 'Failed to parse AI response',
-                        'suggested_fix': 'Unable to generate fix',
-                        'explanation': 'Error parsing the AI service response.',
-                        'confidence': 0.0
-                    }
+                    return self._error_response('Failed to parse AI response')
                 
             except requests.exceptions.Timeout as e:
                 wait_time = base_delay * (2 ** attempt)
@@ -80,32 +76,77 @@ class SecureDeepSeekAPI:
                     time.sleep(wait_time)
                 else:
                     print(f"DeepSeek API timeout after {max_retries} attempts: {e}")
-                    return {
-                        'error': 'API request timed out',
-                        'suggested_fix': 'Unable to generate fix - API timeout',
-                        'explanation': 'The AI service timed out. Please review the code manually.',
-                        'confidence': 0.0
-                    }
+                    return self._error_response('API request timed out')
                     
             except requests.exceptions.RequestException as e:
                 print(f"DeepSeek API error: {e}")
-                return {
-                    'error': 'API request failed',
-                    'suggested_fix': 'Unable to generate fix at this time',
-                    'explanation': 'Please review the code manually',
-                    'confidence': 0.0
-                }
+                return self._error_response('API request failed')
         
-        # Should not reach here, but just in case
+        return self._error_response('Unknown error')
+    
+    def analyze_vulnerabilities_batch(self, vuln_items: List[Dict], ai_mode: str = 'fast', max_workers: int = 5, verbose: bool = False) -> List[Dict]:
+        """Analyze multiple vulnerabilities concurrently using ThreadPoolExecutor.
+        
+        Each item in vuln_items should have: code_snippet, language, vulnerability_type, context
+        Returns list of AI result dicts in the same order.
+        """
+        results = [None] * len(vuln_items)
+        
+        def _analyze_one(index_and_item):
+            idx, item = index_and_item
+            if verbose:
+                import os
+                print(f"  [{idx+1}/{len(vuln_items)}] Analyzing: {item.get('vulnerability_type', 'unknown')}")
+            return idx, self.analyze_vulnerability(
+                item['code_snippet'],
+                item['language'],
+                item['vulnerability_type'],
+                item.get('context', {}),
+                ai_mode=ai_mode
+            )
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = executor.map(_analyze_one, enumerate(vuln_items))
+            for idx, result in futures:
+                results[idx] = result
+        
+        return results
+    
+    @staticmethod
+    def _error_response(error_msg: str) -> Dict:
+        """Return a standard error response dict"""
         return {
-            'error': 'Unknown error',
+            'error': error_msg,
             'suggested_fix': 'Unable to generate fix',
-            'explanation': 'An unexpected error occurred.',
+            'explanation': 'Please review the code manually.',
             'confidence': 0.0
         }
     
+    def _build_fast_prompt(self, code_snippet: str, language: str, vulnerability_type: str, context: Dict) -> str:
+        """Build a concise prompt for fast AI analysis (~5x smaller response)"""
+        sanitized_code = self._sanitize_code(code_snippet)
+        
+        return f"""Analyze this {language} code for a potential {vulnerability_type} vulnerability.
+
+Code:
+```{language}
+{sanitized_code}
+```
+
+Context: Confidence={context.get('confidence', 'Unknown')}, Severity={context.get('severity', 'Unknown')}, Line={context.get('line', 'Unknown')}
+
+Return ONLY this JSON:
+{{
+    "is_confirmed_vulnerability": true/false,
+    "confidence": 0.0-1.0,
+    "risk_level": "Low/Medium/High/Critical",
+    "explanation": "1-2 sentence explanation",
+    "suggested_fix": "The corrected code",
+    "false_positive_reason": "If false positive, explain why"
+}}"""
+
     def _build_secure_prompt(self, code_snippet: str, language: str, vulnerability_type: str, context: Dict) -> str:
-        """Build a comprehensive prompt for detailed security analysis"""
+        """Build a comprehensive prompt for detailed security analysis (full mode)"""
         
         # Sanitize code snippet (remove potential secrets)
         sanitized_code = self._sanitize_code(code_snippet)
