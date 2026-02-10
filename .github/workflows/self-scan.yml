@@ -82,7 +82,7 @@ jobs:
             AI_FLAG="--ai-analysis --max-ai-issues ${{ github.event.inputs.max_ai_issues || '10' }} --ai-mode $AI_MODE"
             
             # Optional test cases report
-            if [ "${{ github.event.inputs.generate_test_cases }}" == "true" ]; then
+            if [ "${{ github.event.inputs.generate_test_cases || 'true' }}" == "true" ]; then
                 TEST_REPORT_FLAG="--test-report ../test-cases.html"
                 echo "🧪 Test case generation enabled"
             fi
