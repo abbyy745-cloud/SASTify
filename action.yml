@@ -42,10 +42,6 @@ inputs:
     description: 'AI analysis mode: fast (concise, quick) or full (comprehensive, slower)'
     required: false
     default: 'fast'
-  generate-test-cases:
-    description: 'Generate a separate HTML report with AI-suggested test cases'
-    required: false
-    default: 'true'
   upload-sarif:
     description: 'Upload SARIF results to GitHub Security tab'
     required: false
@@ -104,10 +100,6 @@ runs:
           ARGS="$ARGS --ai-analysis"
           ARGS="$ARGS --max-ai-issues ${{ inputs.max-ai-issues }}"
           ARGS="$ARGS --ai-mode ${{ inputs.ai-mode }}"
-          
-          if [ "${{ inputs.generate-test-cases }}" == "true" ]; then
-            ARGS="$ARGS --test-report test-cases.html"
-          fi
         fi
         
         # Run scanner

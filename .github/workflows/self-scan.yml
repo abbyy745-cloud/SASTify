@@ -22,7 +22,7 @@ on:
         required: false
         default: '10'
         type: string
-      ai-mode:
+      ai_mode:
         description: 'AI mode: fast (concise, ~3 min) or full (comprehensive, ~15 min)'
         required: false
         default: 'fast'
@@ -30,11 +30,6 @@ on:
         options:
           - fast
           - full
-      generate_test_cases:
-        description: 'Generate separate AI-suggested test cases report'
-        required: false
-        default: 'true'
-        type: boolean
 
 permissions:
   contents: read
@@ -73,20 +68,9 @@ jobs:
           cd Backend
           
           AI_FLAG=""
-          TEST_REPORT_FLAG=""
-          
           if [ "${{ github.event.inputs.ai_analysis || 'true' }}" == "true" ] && [ -n "$DEEPSEEK_API_KEY" ]; then
             AI_MODE="${{ github.event.inputs.ai_mode || 'fast' }}"
-            
-            # Basic AI flags
-            AI_FLAG="--ai-analysis --max-ai-issues ${{ github.event.inputs.max_ai_issues || '10' }} --ai-mode $AI_MODE"
-            
-            # Optional test cases report
-            if [ "${{ github.event.inputs.generate_test_cases || 'true' }}" == "true" ]; then
-                TEST_REPORT_FLAG="--test-report ../test-cases.html"
-                echo "🧪 Test case generation enabled"
-            fi
-            
+            AI_FLAG="--ai-analysis --max-ai-issues ${{ github.event.inputs.max_ai_issues || '10' }} --ai-mode $AI_MODE --test-report ../test-cases.html"
             echo "🤖 AI analysis enabled (mode: $AI_MODE)"
           else
             echo "ℹ️ AI analysis disabled (no API key or disabled)"
@@ -101,16 +85,19 @@ jobs:
             $AI_FLAG \
             --verbose 2>&1 | tee ../scan-output.txt
           
-          # Convert JSON → HTML (preserves all AI analysis, explanations, and fixes)
-          python cli.py convert ../security-report.json \
+          # HTML report (reuses same scan, no AI re-analysis)
+          python cli.py scan .. \
             --format html \
             --output ../security-report.html \
-            $TEST_REPORT_FLAG
+            --exclude "**/node_modules/**,**/__pycache__/**,**/tests/**,**/.git/**" \
+            --languages python,javascript,typescript
           
-          # Convert JSON → SARIF (for GitHub Security tab)
-          python cli.py convert ../security-report.json \
+          # SARIF report (reuses same scan, no AI re-analysis)
+          python cli.py scan .. \
             --format sarif \
-            --output ../sastify-results.sarif
+            --output ../sastify-results.sarif \
+            --exclude "**/node_modules/**,**/__pycache__/**,**/tests/**,**/.git/**" \
+            --languages python,javascript,typescript
         continue-on-error: true
 
       - name: Upload SARIF to GitHub Security
