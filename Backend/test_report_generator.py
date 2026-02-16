@@ -56,17 +56,28 @@ class TestReportGenerator:
             vuln_type = vuln.get('type', 'Unknown')
             tests = vuln.get('ai_test_suggestions', [])
             
+            if not tests:
+                continue
+
             if vuln_type not in grouped_tests:
                 grouped_tests[vuln_type] = {
                     'vulnerabilities': [],
                     'test_count': 0
                 }
             
+            # Extract rich AI data
+            ai_explanation = vuln.get('ai_detailed_explanation', vuln.get('ai_explanation', ''))
+            attack_scenario = vuln.get('ai_attack_scenario', {})
+            impact_analysis = vuln.get('ai_impact_analysis', {})
+            
             grouped_tests[vuln_type]['vulnerabilities'].append({
                 'file': vuln.get('file', 'unknown'),
                 'line': vuln.get('line', '?'),
                 'severity': vuln.get('severity', 'Medium'),
-                'tests': tests
+                'tests': tests,
+                'explanation': ai_explanation,
+                'attack_scenario': attack_scenario,
+                'impact_analysis': impact_analysis
             })
             grouped_tests[vuln_type]['test_count'] += len(tests)
             total_tests += len(tests)
@@ -283,6 +294,84 @@ class TestReportGenerator:
             display: block;
         }}
         
+        /* Analysis Section */
+        .analysis-section {{
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+        }}
+        
+        .analysis-title {{
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }}
+        
+        .analysis-text {{
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            line-height: 1.5;
+        }}
+        
+        .attack-scenario {{
+            background: #fff1f2;
+            border: 1px solid #fecdd3;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+        }}
+        
+        .attack-header {{
+            color: #be123c;
+            font-weight: 600;
+            font-size: 0.9rem;
+            margin-bottom: 0.5rem;
+        }}
+        
+        .payload-tag {{
+            display: inline-block;
+            background: rgba(190, 18, 60, 0.1);
+            color: #be123c;
+            border: 1px solid rgba(190, 18, 60, 0.2);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            margin: 0.2rem 0;
+        }}
+
+        /* Impact Grid */
+        .impact-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }}
+        
+        .impact-item {{
+            background: var(--bg-glass);
+            padding: 0.5rem;
+            border-radius: 4px;
+            border: 1px solid var(--border);
+        }}
+        
+        .impact-label {{
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            color: var(--text-muted);
+        }}
+        
+        .impact-val {{
+            font-weight: 600;
+            font-size: 0.85rem;
+        }}
+
         /* Test Case Card */
         .test-card {{
             background: var(--bg-secondary);
@@ -291,6 +380,7 @@ class TestReportGenerator:
             margin-bottom: 0.75rem;
             overflow: hidden;
             box-shadow: var(--shadow);
+            margin-top: 1rem;
         }}
         
         .test-card:last-child {{
@@ -448,8 +538,8 @@ class TestReportGenerator:
 <body>
     <div class="container">
         <header class="header">
-            <h1 class="logo">Test Cases</h1>
-            <p class="subtitle">AI-Generated Security Test Suite</p>
+            <h1 class="logo">Test Cases & Threat Analysis</h1>
+            <p class="subtitle">AI-Generated Security Test Suite with Deep Analysis</p>
             <p class="timestamp">Generated: {datetime.now().strftime("%B %d, %Y at %H:%M:%S")}</p>
         </header>
         
@@ -491,7 +581,82 @@ class TestReportGenerator:
             <div class="group-content">
 '''
             
-            for vuln_data in data['vulnerabilities']:
+            for i, vuln_data in enumerate(data['vulnerabilities']):
+                file_basename = os.path.basename(vuln_data['file'])
+                analysis_explanation = vuln_data.get('explanation', '')
+                attack = vuln_data.get('attack_scenario', {})
+                impact = vuln_data.get('impact_analysis', {})
+                
+                # Separation between different occurrences of same vuln type
+                if i > 0:
+                    html += '<hr style="border: 0; border-top: 1px dashed var(--border); margin: 2rem 0;">'
+                
+                html += f'''
+                <div style="margin-bottom: 1.5rem;">
+                    <h3 style="font-size: 1.1rem; color: var(--text-primary); margin-bottom: 0.5rem;">
+                        📄 {file_basename}:{vuln_data['line']}
+                    </h3>
+                </div>
+'''
+                
+                # --- AI DEEP ANALYSIS SECTIONS ---
+                
+                # 1. Explanation
+                if analysis_explanation:
+                    html += f'''
+                <div class="analysis-section">
+                    <div class="analysis-title">🤖 AI Analysis</div>
+                    <div class="analysis-text">{analysis_explanation.replace('<', '&lt;').replace('>', '&gt;')}</div>
+                </div>
+'''
+                
+                # 2. Attack Scenario
+                if attack and isinstance(attack, dict):
+                    desc = attack.get('description', '').replace('<', '&lt;').replace('>', '&gt;')
+                    goal = attack.get('attacker_goal', '').replace('<', '&lt;').replace('>', '&gt;')
+                    payloads = attack.get('example_payloads', [])
+                    
+                    html += f'''
+                <div class="attack-scenario">
+                    <div class="attack-header">🎯 Attack Scenario</div>
+                    <p style="font-size: 0.9rem; color: #881337; margin-bottom: 0.5rem;">{desc}</p>
+'''
+                    if goal:
+                        html += f'<p style="font-size: 0.85rem; color: #9f1239;"><strong>Goal:</strong> {goal}</p>'
+                    
+                    if payloads:
+                        html += '<div style="margin-top: 0.5rem;">'
+                        for p in payloads[:3]:
+                            safe_p = str(p).replace('<', '&lt;').replace('>', '&gt;')
+                            html += f'<span class="payload-tag">{safe_p}</span> '
+                        html += '</div>'
+                    
+                    html += '</div>'
+                
+                # 3. Impact Analysis
+                if impact and isinstance(impact, dict):
+                    html += '''
+                <div class="analysis-section">
+                    <div class="analysis-title">📊 Potential Impact</div>
+                    <div class="impact-grid">
+'''
+                    for k in ['confidentiality', 'integrity', 'availability']:
+                        val = impact.get(k, 'Unknown')
+                        safe_val = str(val).replace('<', '&lt;').replace('>', '&gt;')
+                        html += f'''
+                        <div class="impact-item">
+                            <div class="impact-label">{k}</div>
+                            <div class="impact-val">{safe_val}</div>
+                        </div>'''
+                    html += '''
+                    </div>
+                </div>
+'''
+
+                # --- TEST CASES ---
+                
+                html += '<h4 style="margin: 1.5rem 0 1rem 0; color: var(--text-primary);">Suggested Test Cases</h4>'
+
                 for test in vuln_data['tests']:
                     if isinstance(test, dict):
                         test_type = test.get('type', 'unit')
@@ -501,14 +666,11 @@ class TestReportGenerator:
                         test_inputs = test.get('test_inputs', [])
                         expected = test.get('expected_behavior', '').replace('<', '&lt;').replace('>', '&gt;')
                         
-                        file_basename = os.path.basename(vuln_data['file'])
-                        
                         html += f'''
                 <div class="test-card">
                     <div class="test-header">
                         <span class="test-type-badge {test_type}">{test_type}</span>
                         <span class="test-name">{test_name}</span>
-                        <span class="test-source">{file_basename}:{vuln_data['line']}</span>
                     </div>
                     <div class="test-body">
                         <p class="test-desc">{test_desc}</p>

@@ -123,7 +123,7 @@ class SecureDeepSeekAPI:
         }
     
     def _build_fast_prompt(self, code_snippet: str, language: str, vulnerability_type: str, context: Dict) -> str:
-        """Build a concise prompt for fast AI analysis (~5x smaller response)"""
+        """Build a concise prompt for fast AI analysis but with FULL JSON structure"""
         sanitized_code = self._sanitize_code(code_snippet)
         
         return f"""Analyze this {language} code for a potential {vulnerability_type} vulnerability.
@@ -135,15 +135,49 @@ Code:
 
 Context: Confidence={context.get('confidence', 'Unknown')}, Severity={context.get('severity', 'Unknown')}, Line={context.get('line', 'Unknown')}
 
-Return ONLY this JSON:
+You must return a STRICT JSON object with the following structure. Keep textual explanations CONCISE (1-3 sentences) to save tokens, but provide ALL fields.
+
 {{
     "is_confirmed_vulnerability": true/false,
     "confidence": 0.0-1.0,
     "risk_level": "Low/Medium/High/Critical",
-    "explanation": "1-2 sentence explanation",
-    "suggested_fix": "The corrected code",
-    "false_positive_reason": "If false positive, explain why"
-}}"""
+    "vulnerability_summary": "One-line summary",
+    "detailed_explanation": "Concise explanation of the vulnerability and root cause (2-3 sentences max).",
+    "attack_scenario": {{
+        "description": "Brief description of how this is exploited",
+        "example_payloads": ["payload1"],
+        "attacker_goal": "Goal"
+    }},
+    "impact_analysis": {{
+        "confidentiality": "High/Medium/Low - reason",
+        "integrity": "High/Medium/Low - reason",
+        "availability": "High/Medium/Low - reason",
+        "compliance": "List relevant standards"
+    }},
+    "suggested_fix": "Corrected code snippet",
+    "remediation_steps": [
+        "Step 1", "Step 2"
+    ],
+    "false_positive_reason": "Reason if false positive",
+    "suggested_test_cases": [
+        {{
+            "type": "unit",
+            "name": "Test Name",
+            "description": "What it tests",
+            "code": "Test code"
+        }},
+        {{
+            "type": "security",
+            "name": "Security Test",
+            "description": "Attack vector",
+            "test_inputs": ["input1"],
+            "expected_behavior": "Expected result"
+        }}
+    ],
+    "security_references": ["CWE-XXX"]
+}}
+
+Return ONLY the JSON. No markdown formatting outside the JSON."""
 
     def _build_secure_prompt(self, code_snippet: str, language: str, vulnerability_type: str, context: Dict) -> str:
         """Build a comprehensive prompt for detailed security analysis (full mode)"""
