@@ -28,6 +28,12 @@ class RuleCategory(Enum):
     GRADING = "grading_security"
     AUTHENTICATION = "authentication"
     ACCESS_CONTROL = "access_control"
+    API_SECURITY = "api_security"
+    PAYMENT = "payment_billing"
+    CONTENT_SECURITY = "content_security"
+    SESSION = "session_management"
+    INFRASTRUCTURE = "infrastructure"
+    COMPLIANCE = "compliance"
 
 
 class Severity(Enum):
@@ -751,6 +757,263 @@ class EdTechRuleEngine:
             remediation="Require approval or enrollment codes for class joining"
         ))
         
+        # ============================================
+        # CATEGORY 7: API SECURITY (5 rules)
+        # ============================================
+        
+        self._register(EdTechRule(
+            id="EDTECH-058",
+            name="Unauthenticated Grade API",
+            description="Grade retrieval/update API endpoint without authentication",
+            category=RuleCategory.API_SECURITY,
+            severity=Severity.CRITICAL,
+            pattern=r"(app\.(get|post)|router\.(get|post))\s*\(['\"].*/(grade|score|mark)s?.*['\"]\s*,\s*(?!.*auth|.*middleware|.*jwt|.*token)\s*(async\s*)?\(",
+            languages=["python", "javascript", "typescript"],
+            remediation="Add authentication middleware to all grade-related API endpoints",
+            cwe_id="CWE-306"
+        ))
+        
+        self._register(EdTechRule(
+            id="EDTECH-059",
+            name="Bulk Student Data Download",
+            description="Endpoint allows downloading all student data without pagination or limits",
+            category=RuleCategory.API_SECURITY,
+            severity=Severity.HIGH,
+            pattern=r"(export|download|dump).*all.*(student|user|record)",
+            languages=["python", "javascript", "typescript"],
+            remediation="Implement pagination, rate limiting, and access controls for bulk data endpoints",
+            cwe_id="CWE-770",
+            ferpa_relevant=True
+        ))
+        
+        self._register(EdTechRule(
+            id="EDTECH-060",
+            name="GraphQL Introspection Enabled",
+            description="GraphQL introspection left enabled in production exposing schema",
+            category=RuleCategory.API_SECURITY,
+            severity=Severity.MEDIUM,
+            pattern=r"(introspection\s*:\s*true|__schema|__type)",
+            languages=["javascript", "typescript"],
+            remediation="Disable GraphQL introspection in production environments"
+        ))
+        
+        self._register(EdTechRule(
+            id="EDTECH-061",
+            name="API Without Versioning",
+            description="API endpoints without version prefix risk breaking changes",
+            category=RuleCategory.API_SECURITY,
+            severity=Severity.LOW,
+            pattern=r"(app\.(get|post)|router\.(get|post))\s*\(['\"]\s*/(?!(v\d|api/v\d))",
+            languages=["python", "javascript", "typescript"],
+            remediation="Use versioned API paths (e.g., /api/v1/...) for all endpoints"
+        ))
+        
+        self._register(EdTechRule(
+            id="EDTECH-062",
+            name="Excessive Data Exposure in API",
+            description="API returns full database objects instead of specific fields",
+            category=RuleCategory.API_SECURITY,
+            severity=Severity.MEDIUM,
+            pattern=r"(res\.(json|send)|jsonify)\s*\(.*\.(toJSON|toObject|_doc|dict)\s*\(\s*\)",
+            languages=["python", "javascript", "typescript"],
+            remediation="Use DTOs or select specific fields instead of returning full objects",
+            cwe_id="CWE-200"
+        ))
+        
+        # ============================================
+        # CATEGORY 8: PAYMENT / BILLING (3 rules)
+        # ============================================
+        
+        self._register(EdTechRule(
+            id="EDTECH-063",
+            name="Insecure Scholarship Processing",
+            description="Scholarship amount modifiable by client request",
+            category=RuleCategory.PAYMENT,
+            severity=Severity.CRITICAL,
+            pattern=r"(scholarship|financial_?aid|discount).*=\s*(req\.(body|params|query)|request\.(form|json|args))",
+            languages=["python", "javascript", "typescript"],
+            remediation="Validate scholarship amounts server-side against approved values",
+            cwe_id="CWE-20"
+        ))
+        
+        self._register(EdTechRule(
+            id="EDTECH-064",
+            name="Fee Manipulation Vulnerability",
+            description="Tuition or fee amounts taken from client input",
+            category=RuleCategory.PAYMENT,
+            severity=Severity.CRITICAL,
+            pattern=r"(fee|tuition|amount|price)\s*=\s*(req\.(body|params|query)|request\.(form|json|args))",
+            languages=["python", "javascript", "typescript"],
+            remediation="Never trust client-provided fee amounts, calculate server-side"
+        ))
+        
+        self._register(EdTechRule(
+            id="EDTECH-065",
+            name="Unencrypted Payment Data",
+            description="Payment card or bank details stored or transmitted without encryption",
+            category=RuleCategory.PAYMENT,
+            severity=Severity.CRITICAL,
+            pattern=r"(card_?number|cvv|expiry|bank_?account|routing_?number)\s*[=:]\s*['\"]|localStorage\.setItem.*card",
+            languages=["python", "javascript", "typescript"],
+            remediation="Use PCI-DSS compliant payment processor, never store raw card data",
+            cwe_id="CWE-311"
+        ))
+        
+        # ============================================
+        # CATEGORY 9: CONTENT SECURITY (3 rules)
+        # ============================================
+        
+        self._register(EdTechRule(
+            id="EDTECH-066",
+            name="Unsafe File Upload in Assignments",
+            description="Assignment file uploads without type/size validation",
+            category=RuleCategory.CONTENT_SECURITY,
+            severity=Severity.HIGH,
+            pattern=r"(upload|attachment|assignment).*file(?!.*type|.*size|.*valid|.*allow|.*check|.*filter)",
+            languages=["python", "javascript", "typescript"],
+            remediation="Validate file type, size, and content before accepting uploads",
+            cwe_id="CWE-434"
+        ))
+        
+        self._register(EdTechRule(
+            id="EDTECH-067",
+            name="XSS in Forum/Discussion Posts",
+            description="User-generated content displayed without sanitization in forums",
+            category=RuleCategory.CONTENT_SECURITY,
+            severity=Severity.HIGH,
+            pattern=r"(forum|discussion|comment|post).*\.?(html|content|body|text)(?!.*sanitize|.*escape|.*encode|.*purify|.*DOMPurify)",
+            languages=["python", "javascript", "typescript"],
+            remediation="Sanitize all user content with DOMPurify or similar before display",
+            cwe_id="CWE-79"
+        ))
+        
+        self._register(EdTechRule(
+            id="EDTECH-068",
+            name="Insecure Content Embedding",
+            description="External content embedded without sandboxing (iframes)",
+            category=RuleCategory.CONTENT_SECURITY,
+            severity=Severity.MEDIUM,
+            pattern=r"<iframe[^>]*(?!.*sandbox).*src\s*=\s*['\"](?!about:blank)",
+            languages=["javascript", "typescript"],
+            remediation="Use sandbox attribute on iframes embedding external content",
+            cwe_id="CWE-1021"
+        ))
+        
+        # ============================================
+        # CATEGORY 10: SESSION MANAGEMENT (3 rules)
+        # ============================================
+        
+        self._register(EdTechRule(
+            id="EDTECH-069",
+            name="Shared Device Session Persistence",
+            description="Sessions persist on shared/lab computers after logout",
+            category=RuleCategory.SESSION,
+            severity=Severity.HIGH,
+            pattern=r"(remember_?me|keep_?logged|persistent_?session)\s*[=:]\s*(true|1|['\"]yes)",
+            languages=["python", "javascript", "typescript"],
+            remediation="Disable persistent sessions in educational environments with shared devices"
+        ))
+        
+        self._register(EdTechRule(
+            id="EDTECH-070",
+            name="Weak Student Password Policy",
+            description="Password policy allows weak passwords for student accounts",
+            category=RuleCategory.SESSION,
+            severity=Severity.MEDIUM,
+            pattern=r"(minLength|min_?length|password_?min)\s*[=:]\s*[1-5]\b",
+            languages=["python", "javascript", "typescript"],
+            remediation="Enforce minimum 8-character passwords with complexity requirements",
+            cwe_id="CWE-521"
+        ))
+        
+        self._register(EdTechRule(
+            id="EDTECH-071",
+            name="Missing MFA for Admin/Teacher",
+            description="Admin or teacher accounts without multi-factor authentication",
+            category=RuleCategory.SESSION,
+            severity=Severity.HIGH,
+            pattern=r"(admin|teacher|instructor).*login(?!.*mfa|.*2fa|.*two_?factor|.*otp|.*totp)",
+            languages=["python", "javascript", "typescript"],
+            remediation="Require MFA for all admin and teacher accounts"
+        ))
+        
+        # ============================================
+        # CATEGORY 11: INFRASTRUCTURE (3 rules)
+        # ============================================
+        
+        self._register(EdTechRule(
+            id="EDTECH-072",
+            name="Exposed Admin Panel",
+            description="Admin panel accessible without IP restriction or proper auth",
+            category=RuleCategory.INFRASTRUCTURE,
+            severity=Severity.HIGH,
+            pattern=r"(app\.(get|use)|router\.(get|use))\s*\(['\"].*/admin(?!.*auth|.*role|.*permission|.*ip)",
+            languages=["python", "javascript", "typescript"],
+            remediation="Restrict admin panel access by IP and require strong authentication"
+        ))
+        
+        self._register(EdTechRule(
+            id="EDTECH-073",
+            name="Debug Endpoints in Production",
+            description="Debug or test endpoints left accessible",
+            category=RuleCategory.INFRASTRUCTURE,
+            severity=Severity.MEDIUM,
+            pattern=r"(app\.(get|post)|router\.(get|post))\s*\(['\"].*(debug|test|dev|internal).*['\"]",
+            languages=["python", "javascript", "typescript"],
+            remediation="Remove or restrict debug endpoints before deploying to production"
+        ))
+        
+        self._register(EdTechRule(
+            id="EDTECH-074",
+            name="Health Check Leaking Sensitive Data",
+            description="Health check endpoint exposes database connection info or secrets",
+            category=RuleCategory.INFRASTRUCTURE,
+            severity=Severity.MEDIUM,
+            pattern=r"(health|status).*check.*\{.*\b(db|database|connection|secret|key|password)\b",
+            languages=["python", "javascript", "typescript"],
+            remediation="Return only UP/DOWN status from health endpoints, no sensitive details"
+        ))
+        
+        # ============================================
+        # CATEGORY 12: COMPLIANCE (3 rules)
+        # ============================================
+        
+        self._register(EdTechRule(
+            id="EDTECH-075",
+            name="Missing GDPR/Privacy Consent",
+            description="Collecting student data without consent verification",
+            category=RuleCategory.COMPLIANCE,
+            severity=Severity.HIGH,
+            pattern=r"(Student|User)\.(create|register|save)\s*\((?!.*consent|.*gdpr|.*privacy|.*agree)",
+            languages=["python", "javascript", "typescript"],
+            remediation="Verify privacy consent before collecting or processing student data",
+            ferpa_relevant=True,
+            coppa_relevant=True
+        ))
+        
+        self._register(EdTechRule(
+            id="EDTECH-076",
+            name="Audit Log Tampering",
+            description="Audit logs can be modified or deleted by users",
+            category=RuleCategory.COMPLIANCE,
+            severity=Severity.HIGH,
+            pattern=r"(AuditLog|audit_?log|log_?entry)\.(update|delete|remove|destroy)\s*\(",
+            languages=["python", "javascript", "typescript"],
+            remediation="Make audit logs append-only, prevent modification or deletion"
+        ))
+        
+        self._register(EdTechRule(
+            id="EDTECH-077",
+            name="Data Portability Not Implemented",
+            description="No mechanism for students to export their own data",
+            category=RuleCategory.COMPLIANCE,
+            severity=Severity.LOW,
+            pattern=r"class\s+(Student|User).*(?!.*export|.*download|.*portability)",
+            languages=["python", "javascript", "typescript"],
+            remediation="Implement data export functionality for GDPR/FERPA compliance",
+            ferpa_relevant=True
+        ))
+        
     def _register(self, rule: EdTechRule):
         """Register a rule"""
         self.rules[rule.id] = rule
@@ -777,6 +1040,7 @@ class EdTechRuleEngine:
         applicable_rules = self.get_rules_for_language(language)
         
         lines = code.split('\n')
+        total_lines = len(lines)
         
         for rule in applicable_rules:
             try:
@@ -784,6 +1048,15 @@ class EdTechRuleEngine:
                 
                 for i, line in enumerate(lines, 1):
                     if pattern.search(line):
+                        # Build snippet_context with ±3 surrounding lines
+                        ctx_start = max(0, i - 4)  # 3 lines before (0-indexed)
+                        ctx_end = min(total_lines, i + 3)  # 3 lines after
+                        context_lines = []
+                        for ctx_i in range(ctx_start, ctx_end):
+                            prefix = '>>> ' if ctx_i == i - 1 else '    '
+                            context_lines.append(f'{prefix}{ctx_i + 1}: {lines[ctx_i]}')
+                        snippet_context = '\n'.join(context_lines)
+                        
                         issues.append({
                             'rule_id': rule.id,
                             'type': rule.name,
@@ -792,6 +1065,7 @@ class EdTechRuleEngine:
                             'severity': rule.severity.value,
                             'line': i,
                             'snippet': line.strip(),
+                            'snippet_context': snippet_context,
                             'remediation': rule.remediation,
                             'cwe_id': rule.cwe_id,
                             'ferpa_relevant': rule.ferpa_relevant,

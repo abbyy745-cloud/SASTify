@@ -1302,7 +1302,7 @@ class EnhancedRuleEngine:
                 (r"request\.args\.get\('marks'\)", 'submission_tampering', 0.8, 'Critical'),
                 (r"score\s*=\s*request\..*?\.get\('score'\)", 'submission_tampering', 0.8, 'Critical'),
                 (r"safe\s*=\s*False", 'unsafe_file_upload', 0.6, 'High'), # Context dependent
-                (r"safe\s*=\s*False", 'unsafe_file_upload', 0.6, 'High'), # Context dependent
+
                 (r"MathJax\.Hub\.Config", 'inline_mathjax_exploit', 0.4, 'Medium', True), # Potential vector
                 (r"window\.(setTimeout|setInterval)", 'client_side_timer', 0.6, 'High', True), # Embedded JS
                 (r"dangerouslySetInnerHTML", 'cheating_html_injection', 0.8, 'High', True), # Embedded JS/React
@@ -1326,6 +1326,45 @@ class EnhancedRuleEngine:
                 # --- Deep EdTech: LTI & Proctoring ---
                 (r"oauth_consumer_key", 'lti_launch_handling', 0.4, 'Medium'), # Just flagging LTI presence for AST to check
                 (r"lis_outcome_service_url", 'lti_launch_handling', 0.4, 'Medium'),
+                
+                # --- Universal: Additional Patterns ---
+                # IDOR / Broken Object-Level Authorization
+                (r"(Model|db|collection)\.(find|get|delete|update).*\(.*request\.(args|form|json)", 'idor', 0.7, 'High'),
+                (r"get_object_or_404\s*\(.*request\.(GET|POST)", 'idor', 0.7, 'High'),
+                
+                # Mass Assignment
+                (r"\*\*request\.(json|form|data)", 'mass_assignment', 0.8, 'High'),
+                (r"update\s*\(\s*\*\*", 'mass_assignment', 0.7, 'High'),
+                
+                # Open Redirect
+                (r"redirect\s*\(\s*request\.(args|GET|POST)", 'open_redirect', 0.8, 'High'),
+                (r"redirect\s*\(\s*url_for\s*\(.*request", 'open_redirect', 0.7, 'Medium'),
+                
+                # Server-Side Template Injection (SSTI)
+                (r"render_template_string\s*\(.*request", 'ssti', 0.9, 'Critical'),
+                (r"Template\s*\(.*request", 'ssti', 0.8, 'High'),
+                (r"jinja2\.Environment.*from_string", 'ssti', 0.7, 'High'),
+                
+                # LDAP Injection
+                (r"ldap\.(search|bind|modify).*\(.*request", 'ldap_injection', 0.8, 'High'),
+                (r"ldap_filter.*\+.*request", 'ldap_injection', 0.7, 'High'),
+                
+                # XXE (XML External Entity)
+                (r"etree\.parse\s*\(", 'xxe', 0.6, 'Medium'),
+                (r"etree\.fromstring\s*\(", 'xxe', 0.6, 'Medium'),
+                (r"xml\.dom\.minidom\.parse\s*\(", 'xxe', 0.6, 'Medium'),
+                (r"parseXML|xml\.sax\.parse", 'xxe', 0.6, 'Medium'),
+                
+                # Insecure File Upload
+                (r"save\s*\(.*filename.*\)(?!.*secure_filename)", 'insecure_file_upload', 0.7, 'High'),
+                (r"allowed_extensions.*=.*\*", 'insecure_file_upload', 0.8, 'High'),
+                
+                # Missing Rate Limiting
+                (r"@app\.route.*login|@app\.route.*auth|@app\.route.*password", 'missing_rate_limit', 0.5, 'Medium'),
+                
+                # Timing Attack
+                (r"==\s*.*password|password.*==", 'timing_attack', 0.5, 'Medium'),
+                (r"if.*token\s*==\s*", 'timing_attack', 0.5, 'Medium'),
             ],
             'javascript': [
                 # SQL Injection
@@ -1419,10 +1458,6 @@ class EnhancedRuleEngine:
                 (r"app\.post\s*\(\s*['\"].*submit_grade.*['\"]", 'unprotected_exam_endpoint_node', 0.6, 'High'),
                 (r"const\s+score\s*=\s*req\.body\.score", 'submission_tampering_node', 0.8, 'Critical'),
                 
-                (r"const\s+score\s*=\s*req\.body\.score", 'submission_tampering_node', 0.8, 'Critical'),
-                
-                (r"const\s+score\s*=\s*req\.body\.score", 'submission_tampering_node', 0.8, 'Critical'),
-                
                 (r"const\s+prompt\s*=\s*.*?\+.*?(req\.body|req\.query|req\.params|userInput)", 'prompt_injection_node', 0.8, 'High', True),
                 (r"openai\.createCompletion", 'ai_api_call_node', 0.5, 'Low'), # Just flagging usage
 
@@ -1437,6 +1472,44 @@ class EnhancedRuleEngine:
                 (r"document\.hidden", 'proctoring_evasion', 0.6, 'Medium'), # Checking visibility state
                 (r"navigator\.webdriver", 'proctoring_evasion', 0.6, 'Medium'), # Checking for automation
                 (r"window\.open\s*\(", 'proctoring_evasion', 0.4, 'Low'), # Opening new tabs
+                
+                # --- Universal: Additional Patterns ---
+                # IDOR / Broken Object-Level Authorization
+                (r"(Model|db|collection)\.(find|findOne|findById|deleteOne|updateOne)\s*\(.*req\.(params|query|body)", 'idor', 0.7, 'High'),
+                (r"req\.params\.(id|userId|studentId)\s*(?!.*===.*req\.user)", 'idor', 0.6, 'Medium'),
+                
+                # Mass Assignment
+                (r"Object\.assign\s*\(.*,\s*req\.body\s*\)", 'mass_assignment', 0.8, 'High'),
+                (r"\{\s*\.\.\.req\.body\s*\}", 'mass_assignment', 0.8, 'High'),
+                (r"new\s+\w+\(\s*req\.body\s*\)", 'mass_assignment', 0.7, 'High'),
+                
+                # Open Redirect
+                (r"res\.redirect\s*\(\s*req\.(query|body|params)", 'open_redirect', 0.8, 'High'),
+                (r"window\.location\s*=\s*.*req\.(query|body|params)", 'open_redirect', 0.8, 'High'),
+                
+                # Server-Side Template Injection
+                (r"ejs\.render\s*\(.*req\.(body|query)", 'ssti', 0.9, 'Critical'),
+                (r"pug\.render\s*\(.*req\.(body|query)", 'ssti', 0.8, 'High'),
+                (r"handlebars\.compile\s*\(.*req\.(body|query)", 'ssti', 0.8, 'High'),
+                
+                # XXE (XML External Entity)
+                (r"(parseString|parseXML|xml2js)\s*\(.*req\.(body|query)", 'xxe', 0.7, 'High'),
+                (r"DOMParser.*parseFromString", 'xxe', 0.5, 'Medium'),
+                
+                # Insecure File Upload
+                (r"multer\s*\(\s*\{(?!.*fileFilter)", 'insecure_file_upload', 0.6, 'Medium'),
+                (r"upload\.(single|array|any)\s*\(", 'insecure_file_upload', 0.5, 'Medium'),
+                
+                # Missing Rate Limiting
+                (r"app\.(post|get)\s*\(['\"].*(login|auth|register|password)['\"](?!.*rateLimit|.*limiter)", 'missing_rate_limit', 0.5, 'Medium'),
+                
+                # NoSQL Injection (additional patterns)
+                (r"\$where.*req\.(body|query|params)", 'nosql_injection', 0.9, 'Critical'),
+                (r"\$regex.*req\.(body|query|params)", 'nosql_injection', 0.7, 'High'),
+                
+                # Timing Attack
+                (r"===?\s*.*password|password.*===?", 'timing_attack', 0.5, 'Medium'),
+                (r"if\s*\(.*token\s*===?\s*", 'timing_attack', 0.5, 'Medium'),
             ]
         }
 
@@ -1486,7 +1559,7 @@ class EnhancedRuleEngine:
         if filename and filename.endswith(('.jsx', '.tsx', '.vue', '.html')):
              issues.extend(self.frontend_scanner.scan(code, filename))
         
-        # EdTech-specific rule scanning (57 comprehensive rules)
+        # EdTech-specific rule scanning (comprehensive rules)
         if self.edtech_available:
             edtech_lang = 'typescript' if language == 'typescript' else language
             edtech_issues = self.edtech_engine.scan_code(code, edtech_lang, filename or '')
@@ -1497,16 +1570,44 @@ class EnhancedRuleEngine:
         pattern_lang = 'javascript' if language == 'typescript' else language
         pattern_issues = self._scan_with_patterns(code, pattern_lang)
         
-        # Deduplicate: Only add pattern issues if they don't overlap with AST issues
-        # Overlap defined as: Same line AND Same type
-        ast_issue_signatures = {(issue['line'], issue['type']) for issue in issues}
-
+        # Improved deduplication: normalize types to categories with ±2 line tolerance
+        # Build a set of (line_bucket, normalized_category) from existing issues
+        CATEGORY_MAP = {
+            'pii_leakage_log': 'pii_exposure', 'pii_leakage_log_node': 'pii_exposure',
+            'pii_leakage_stacktrace': 'pii_exposure', 'pii_exposure_node': 'pii_exposure',
+            'hardcoded_pii': 'pii_exposure', 'hardcoded_ai_key': 'hardcoded_secret',
+            'submission_tampering_url': 'submission_tampering',
+            'submission_tampering_node': 'submission_tampering',
+            'unprotected_exam_endpoint_node': 'exam_integrity',
+            'unprotected_exam_endpoint': 'exam_integrity',
+            'client_side_timer': 'exam_integrity',
+            'ssrf_node': 'ssrf', 'ssrf': 'ssrf',
+            'prompt_injection_node': 'prompt_injection',
+            'prompt_injection': 'prompt_injection',
+            'unsafe_route_node': 'access_control',
+            'unsafe_identifier_exposure': 'pii_exposure',
+            'cheating_html_injection': 'xss',
+        }
+        
+        def normalize(vuln_type):
+            return CATEGORY_MAP.get(vuln_type, vuln_type)
+        
+        # Build signatures with ±2 line tolerance
+        existing_signatures = []
+        for issue in issues:
+            existing_signatures.append((issue['line'], normalize(issue['type'])))
         
         for issue in pattern_issues:
-            if (issue['line'], issue['type']) not in ast_issue_signatures:
-                # If it's a regex match but not found by AST, we keep it but mark it
-                # This ensures we don't miss things AST misses, but we don't double report
+            norm_type = normalize(issue['type'])
+            is_duplicate = False
+            for existing_line, existing_cat in existing_signatures:
+                if existing_cat == norm_type and abs(existing_line - issue['line']) <= 2:
+                    is_duplicate = True
+                    break
+            
+            if not is_duplicate:
                 issues.append(issue)
+                existing_signatures.append((issue['line'], norm_type))
         
         return issues
     
@@ -1519,6 +1620,10 @@ class EnhancedRuleEngine:
             
         # Get ranges of string literals to ignore
         string_ranges = self._get_string_ranges(code, language)
+        
+        # Pre-split code into lines for context extraction
+        code_lines = code.split('\n')
+        total_lines = len(code_lines)
         
         for pattern_tuple in self.vulnerability_patterns[language]:
             # Unpack tuple with optional 5th element
@@ -1560,10 +1665,23 @@ class EnhancedRuleEngine:
                     if is_inside_string:
                         continue
 
+                # Build snippet with the matched line
+                snippet = code_lines[line_number - 1].strip() if line_number <= total_lines else ''
+                
+                # Build snippet_context with ±3 surrounding lines for AI analysis
+                ctx_start = max(0, line_number - 4)  # 3 lines before (0-indexed)
+                ctx_end = min(total_lines, line_number + 3)  # 3 lines after
+                context_lines = []
+                for ctx_i in range(ctx_start, ctx_end):
+                    prefix = '>>> ' if ctx_i == line_number - 1 else '    '
+                    context_lines.append(f'{prefix}{ctx_i + 1}: {code_lines[ctx_i]}')
+                snippet_context = '\n'.join(context_lines)
+
                 issues.append({
                     'type': vuln_type,
                     'line': line_number,
-                    'snippet': code.split('\n')[line_number - 1].strip(),  # Full line for better AI context
+                    'snippet': snippet,
+                    'snippet_context': snippet_context,
                     'confidence': confidence,
                     'severity': severity,
                     'scanner': 'pattern_matching',

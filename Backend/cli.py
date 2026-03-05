@@ -23,7 +23,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from enhanced_rule_engine import EnhancedRuleEngine
-from edtech_rules import EdTechRuleEngine
+
 from sarif_formatter import SarifFormatter
 from colorama import init, Fore, Style
 
@@ -75,9 +75,139 @@ class SASTifyCLI:
     
     SEVERITY_ORDER = ['critical', 'high', 'medium', 'low', 'info']
     
+    # Vulnerability type normalization map for cross-ruleset deduplication
+    # Maps specific type strings to broader categories so overlapping detections merge
+    VULN_CATEGORY_MAP = {
+        # PII / Data Exposure
+        'pii_leakage_log': 'pii_exposure',
+        'pii_leakage_log_node': 'pii_exposure',
+        'pii_leakage_stacktrace': 'pii_exposure',
+        'pii_exposure_node': 'pii_exposure',
+        'hardcoded_pii': 'pii_exposure',
+        'Student PII in Logs': 'pii_exposure',
+        'Student Email Exposure in API Response': 'pii_exposure',
+        'Minor Student Age Data Exposure': 'pii_exposure',
+        'Student Health Data Exposure': 'pii_exposure',
+        'Student SSN/Tax ID Processing': 'pii_exposure',
+        'Student Data in URL Parameters': 'pii_exposure',
+        'Student Data in Comments': 'pii_exposure',
+        'Student Location Tracking': 'pii_exposure',
+        'information_exposure': 'pii_exposure',
+        'unsafe_identifier_exposure': 'pii_exposure',
+        
+        # Hardcoded Secrets
+        'hardcoded_secret': 'hardcoded_secret',
+        'hardcoded_ai_key': 'hardcoded_secret',
+        'LTI Secret in Code': 'hardcoded_secret',
+        'Hardcoded AI API Key': 'hardcoded_secret',
+        'Canvas API Token Exposed': 'hardcoded_secret',
+        
+        # SQL Injection
+        'sql_injection': 'sql_injection',
+        
+        # Code Injection
+        'code_injection': 'code_injection',
+        
+        # XSS
+        'xss': 'xss',
+        'react_xss': 'xss',
+        'vue_xss': 'xss',
+        'angular_xss': 'xss',
+        'cheating_html_injection': 'xss',
+        
+        # Prompt Injection
+        'prompt_injection': 'prompt_injection',
+        'prompt_injection_node': 'prompt_injection',
+        'Student Input in AI Prompt Without Sanitization': 'prompt_injection',
+        
+        # SSRF
+        'ssrf': 'ssrf',
+        'ssrf_node': 'ssrf',
+        
+        # Submission Tampering
+        'submission_tampering': 'submission_tampering',
+        'submission_tampering_url': 'submission_tampering',
+        'submission_tampering_node': 'submission_tampering',
+        'Direct Grade Update Without Validation': 'submission_tampering',
+        
+        # Exam Integrity
+        'unprotected_exam_endpoint': 'exam_integrity',
+        'unprotected_exam_endpoint_node': 'exam_integrity',
+        'client_side_timer': 'exam_integrity',
+        'Exam Timer Manipulation Vulnerability': 'exam_integrity',
+        'Exam Answers in Client-Side Code': 'exam_integrity',
+        'Exam Score Calculation Client-Side': 'exam_integrity',
+        'Exam Access Without Enrollment Check': 'exam_integrity',
+        'Exam Session Hijacking Possible': 'exam_integrity',
+        'Exam Submission After Deadline': 'exam_integrity',
+        'Question Bank Exposed to Client': 'exam_integrity',
+        
+        # Proctoring Evasion
+        'proctoring_evasion': 'proctoring_evasion',
+        'Proctoring Bypass Detection': 'proctoring_evasion',
+        'Tab Visibility Override': 'proctoring_evasion',
+        'Virtual Machine Detection Bypass': 'proctoring_evasion',
+        'Webcam Spoofing': 'proctoring_evasion',
+        'Copy-Paste Detection Bypass': 'proctoring_evasion',
+        'Browser Extension Detection Bypass': 'proctoring_evasion',
+        
+        # SSL/TLS
+        'ssl_verification_disabled': 'ssl_issues',
+        
+        # Deserialization
+        'insecure_deserialization': 'insecure_deserialization',
+        
+        # Access Control
+        'Teacher Impersonation Possible': 'access_control',
+        'Course Admin Access Without Verification': 'access_control',
+        'Parent Access to Wrong Child': 'access_control',
+        'Student Accessing Teacher-Only Endpoint': 'access_control',
+        'Cross-Student Data Access': 'access_control',
+        'Class Enrollment Bypass': 'access_control',
+        'Bulk Student Data Export Without Authorization': 'access_control',
+        'unsafe_route_node': 'access_control',
+        
+        # Storage
+        'Unencrypted Student Data Storage': 'insecure_storage',
+        
+        # Prototype Pollution
+        'prototype_pollution': 'prototype_pollution',
+        
+        # JWT
+        'weak_jwt_alg': 'jwt_issues',
+        
+        # AI Security
+        'AI Grading Without Human Review': 'ai_security',
+        'AI Tutoring Answer Leakage': 'ai_security',
+        'AI System Prompt Exposed': 'ai_security',
+        'AI Response Without Content Filter': 'ai_security',
+        'AI Training Data Leakage': 'ai_security',
+        'ai_grading_security': 'ai_security',
+        'ai_api_call_node': 'ai_security',
+        
+        # LMS
+        'LTI Signature Not Verified': 'lms_security',
+        'LTI Nonce Replay Attack': 'lms_security',
+        'SCORM Data Tampering': 'lms_security',
+        'xAPI Statement Forgery': 'lms_security',
+        'LMS Webhook Not Verified': 'lms_security',
+        'Grade Passback Without SSL': 'lms_security',
+        'lti_launch_handling': 'lms_security',
+    }
+    
+    # Scanner priority for deduplication (higher = preferred)
+    SCANNER_PRIORITY = {
+        'edtech_rules': 100,
+        'ast_taint_analysis': 90,
+        'ast_logic_analysis': 85,
+        'ast_sink_detection': 80,
+        'typescript_analyzer': 75,
+        'frontend_ast': 70,
+        'pattern_matching': 50,
+    }
+
     def __init__(self):
         self.rule_engine = EnhancedRuleEngine()
-        self.edtech_engine = EdTechRuleEngine()
         self.sarif_formatter = SarifFormatter()
         self.config = {}
     
@@ -117,6 +247,12 @@ class SASTifyCLI:
             for filepath in files:
                 vulns = self._scan_file(filepath, args.verbose)
                 all_vulnerabilities.extend(vulns)
+            
+            # Deduplicate across rulesets before any further processing
+            before_count = len(all_vulnerabilities)
+            all_vulnerabilities = self._deduplicate_vulnerabilities(all_vulnerabilities)
+            if args.verbose and before_count != len(all_vulnerabilities):
+                print(f"{Fore.CYAN}Deduplication: {before_count} → {len(all_vulnerabilities)} unique findings{Style.RESET_ALL}")
             
             # Filter by severity
             if args.severity:
@@ -267,7 +403,7 @@ class SASTifyCLI:
         
         vulnerabilities = []
         
-        # Main rule engine scan
+        # Main rule engine scan (includes AST + EdTech + pattern matching internally)
         try:
             vulns = self.rule_engine.scan_with_ast_analysis(code, language, filepath)
             for v in vulns:
@@ -277,17 +413,91 @@ class SASTifyCLI:
             if verbose:
                 print(f"  {Fore.YELLOW}Warning: AST scan failed for {filepath}: {e}{Style.RESET_ALL}")
         
-        # EdTech rules scan
-        try:
-            edtech_vulns = self.edtech_engine.scan_code(code, language, filepath)
-            for v in edtech_vulns:
-                v['file'] = filepath
-            vulnerabilities.extend(edtech_vulns)
-        except Exception:
-            pass
-        
         return vulnerabilities
     
+    def _deduplicate_vulnerabilities(self, vulnerabilities: List[Dict]) -> List[Dict]:
+        """Cross-ruleset deduplication with smart fingerprinting.
+        
+        Groups vulnerabilities by (file, line_range, category) and keeps
+        the highest-priority detection, merging metadata from duplicates.
+        """
+        if not vulnerabilities:
+            return []
+        
+        def normalize_category(vuln_type: str) -> str:
+            """Map specific vulnerability type to a broader category."""
+            return self.VULN_CATEGORY_MAP.get(vuln_type, vuln_type.lower().replace(' ', '_'))
+        
+        def scanner_priority(scanner: str) -> int:
+            """Get priority score for a scanner."""
+            return self.SCANNER_PRIORITY.get(scanner, 60)
+        
+        # Group by (file, normalized_category) with ±2 line tolerance
+        groups = {}  # key -> list of vulns
+        
+        for vuln in vulnerabilities:
+            file_path = vuln.get('file', '')
+            line = vuln.get('line', 0)
+            category = normalize_category(vuln.get('type', ''))
+            
+            # Try to find an existing group within ±2 lines
+            matched_key = None
+            for key in groups:
+                k_file, k_category, k_line = key
+                if k_file == file_path and k_category == category and abs(k_line - line) <= 2:
+                    matched_key = key
+                    break
+            
+            if matched_key:
+                groups[matched_key].append(vuln)
+            else:
+                groups[(file_path, category, line)] = [vuln]
+        
+        # For each group, keep the best detection and merge metadata
+        deduplicated = []
+        for key, group in groups.items():
+            if len(group) == 1:
+                deduplicated.append(group[0])
+                continue
+            
+            # Sort by scanner priority (highest first)
+            group.sort(key=lambda v: scanner_priority(v.get('scanner', '')), reverse=True)
+            
+            # Take the highest-priority detection as the base
+            best = dict(group[0])  # shallow copy
+            
+            # Merge useful fields from duplicates
+            all_rule_ids = set()
+            all_scanners = set()
+            best_confidence = best.get('confidence', 0)
+            best_snippet = best.get('snippet', '')
+            best_snippet_context = best.get('snippet_context', '')
+            
+            for v in group:
+                if v.get('rule_id'):
+                    all_rule_ids.add(v['rule_id'])
+                all_scanners.add(v.get('scanner', 'unknown'))
+                if v.get('confidence', 0) > best_confidence:
+                    best_confidence = v['confidence']
+                # Prefer longer snippets (more context)
+                if len(v.get('snippet_context', '')) > len(best_snippet_context):
+                    best_snippet_context = v['snippet_context']
+                if len(v.get('snippet', '')) > len(best_snippet):
+                    best_snippet = v['snippet']
+            
+            best['confidence'] = best_confidence
+            best['snippet'] = best_snippet
+            if best_snippet_context:
+                best['snippet_context'] = best_snippet_context
+            if all_rule_ids:
+                best['rule_ids'] = list(all_rule_ids)
+            best['scanners'] = list(all_scanners)
+            best['deduplicated_count'] = len(group)
+            
+            deduplicated.append(best)
+        
+        return deduplicated
+
     def _run_ai_analysis(self, vulnerabilities: List[Dict], ai_analyzer, 
                          max_issues: int, verbose: bool, ai_mode: str = 'fast') -> List[Dict]:
         """Run AI analysis on vulnerabilities using concurrent batch processing"""
