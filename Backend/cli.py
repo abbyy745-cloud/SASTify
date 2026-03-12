@@ -198,6 +198,9 @@ class SASTifyCLI:
     # Scanner priority for deduplication (higher = preferred)
     SCANNER_PRIORITY = {
         'edtech_rules': 100,
+        'python_security_rules': 95,
+        'javascript_security_rules': 95,
+        'framework_security_rules': 92,
         'ast_taint_analysis': 90,
         'ast_logic_analysis': 85,
         'ast_sink_detection': 80,

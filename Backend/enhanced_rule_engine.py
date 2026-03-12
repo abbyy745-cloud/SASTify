@@ -1136,6 +1136,33 @@ class EnhancedRuleEngine:
             self.edtech_available = False
             print("Warning: EdTech rules not available")
         
+        # Initialize Python security rule engine
+        try:
+            from python_security_rules import PythonRuleEngine
+            self.python_rule_engine = PythonRuleEngine()
+            self.python_rules_available = True
+        except ImportError:
+            self.python_rule_engine = None
+            self.python_rules_available = False
+        
+        # Initialize JavaScript/TypeScript security rule engine
+        try:
+            from javascript_security_rules import JavaScriptRuleEngine
+            self.js_rule_engine = JavaScriptRuleEngine()
+            self.js_rules_available = True
+        except ImportError:
+            self.js_rule_engine = None
+            self.js_rules_available = False
+        
+        # Initialize Framework & Mobile security rule engine
+        try:
+            from framework_security_rules import FrameworkRuleEngine
+            self.framework_rule_engine = FrameworkRuleEngine()
+            self.framework_rules_available = True
+        except ImportError:
+            self.framework_rule_engine = None
+            self.framework_rules_available = False
+        
         # Initialize TypeScript analyzer
         try:
             from typescript_analyzer import TypeScriptParser
@@ -1564,9 +1591,24 @@ class EnhancedRuleEngine:
             edtech_lang = 'typescript' if language == 'typescript' else language
             edtech_issues = self.edtech_engine.scan_code(code, edtech_lang, filename or '')
             issues.extend(edtech_issues)
-
         
-        # Regex-based pattern matching (Fallback & Supplementary)
+        # Python structured security rules (run BEFORE pattern fallback)
+        if language == 'python' and self.python_rules_available:
+            py_rule_issues = self.python_rule_engine.scan_code(code, filename or '')
+            issues.extend(py_rule_issues)
+        
+        # JavaScript/TypeScript structured security rules
+        if language in ('javascript', 'typescript') and self.js_rules_available:
+            js_rule_issues = self.js_rule_engine.scan_code(code, filename or '')
+            issues.extend(js_rule_issues)
+        
+        # Framework & Mobile structured security rules
+        if self.framework_rules_available:
+            fw_lang = language
+            fw_issues = self.framework_rule_engine.scan_code(code, fw_lang, filename or '')
+            issues.extend(fw_issues)
+        
+        # Regex-based pattern matching (Fallback & Supplementary - runs LAST)
         pattern_lang = 'javascript' if language == 'typescript' else language
         pattern_issues = self._scan_with_patterns(code, pattern_lang)
         
