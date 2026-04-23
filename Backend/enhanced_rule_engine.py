@@ -571,13 +571,26 @@ class JavascriptASTScanner:
     def scan(self, code: str) -> List[Dict]:
         self.issues = []
         self.tainted_variables = set()
+        
+        # Pre-process ES2020+ syntax to prevent esprima from crashing
+        import re
+        clean_code = code
+        try:
+            clean_code = re.sub(r'\?\.', '.', clean_code)  # Optional chaining
+            clean_code = re.sub(r'\?\?', '||', clean_code)  # Nullish coalescing
+            clean_code = re.sub(r'(\&\&|\|\||\?\?)=', '=', clean_code)  # Logical assignments
+            clean_code = re.sub(r'(?<=\d)_(?=\d)', '', clean_code)  # Numeric separators
+            clean_code = re.sub(r'(?<=\s|\.)#([a-zA-Z_]\w*)', r'_\1', clean_code) # Private fields
+        except Exception:
+            pass
+
         try:
             # Try parsing as ES6 module first (supports import/export)
             try:
-                parsed = esprima.parseModule(code, {'loc': True})
+                parsed = esprima.parseModule(clean_code, {'loc': True})
             except Exception:
                 # Fall back to script parsing for non-module code
-                parsed = esprima.parseScript(code, {'loc': True})
+                parsed = esprima.parseScript(clean_code, {'loc': True})
             self._traverse(parsed, code)
         except Exception as e:
             print(f"JavaScript AST scan error: {e}")
