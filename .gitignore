@@ -33,6 +33,9 @@ ENV/
 
 # Project specific
 .sastify_cache/
+.sastify_data/
+sastify_data/
+*.db
 *.sarif
 *.log
 sastify-report.html

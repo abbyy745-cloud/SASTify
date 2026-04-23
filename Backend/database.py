@@ -84,10 +84,17 @@ class Database:
     
     def __init__(self, db_path: str = None):
         if db_path is None:
+            # Check environment variable first
+            db_path = os.environ.get('DATABASE_PATH')
+        
+        if db_path is None:
             # Default to user's data directory
             data_dir = os.path.join(os.path.dirname(__file__), '.sastify_data')
             os.makedirs(data_dir, exist_ok=True)
             db_path = os.path.join(data_dir, 'sastify.db')
+        else:
+            # Ensure parent directory exists for env-specified path
+            os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
         
         self.db_path = db_path
         self._init_schema()
@@ -194,6 +201,18 @@ class Database:
                 )
             """)
             
+            # Users table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id TEXT PRIMARY KEY,
+                    username TEXT UNIQUE,
+                    email TEXT,
+                    created_at TEXT NOT NULL,
+                    last_active TEXT,
+                    settings TEXT DEFAULT '{}'  -- JSON blob for user preferences
+                )
+            """)
+            
             # Create indexes for performance
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_scans_user ON scans(user_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_scans_created ON scans(created_at)")
@@ -201,6 +220,7 @@ class Database:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_vulns_type ON vulnerabilities(vuln_type)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_vulns_severity ON vulnerabilities(severity)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
             
             conn.commit()
     
@@ -285,18 +305,107 @@ class Database:
                 'vulnerabilities': [dict(row) for row in vuln_rows]
             }
     
-    def get_user_scans(self, user_id: str, limit: int = 50) -> List[Dict]:
-        """Get recent scans for a user"""
+    def get_user_scans(self, user_id: str, limit: int = 50, offset: int = 0) -> List[Dict]:
+        """Get recent scans for a user with pagination"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT * FROM scans 
                 WHERE user_id = ? 
                 ORDER BY created_at DESC 
-                LIMIT ?
-            """, (user_id, limit))
+                LIMIT ? OFFSET ?
+            """, (user_id, limit, offset))
             
+            scans = [dict(row) for row in cursor.fetchall()]
+            
+            # Get total count for pagination
+            cursor.execute(
+                "SELECT COUNT(*) as total FROM scans WHERE user_id = ?",
+                (user_id,)
+            )
+            total = cursor.fetchone()['total']
+            
+            return {'scans': scans, 'total': total, 'limit': limit, 'offset': offset}
+    
+    def get_user_scan(self, user_id: str, scan_id: str) -> Optional[Dict]:
+        """Get a specific scan only if it belongs to the given user (ownership check)"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute(
+                "SELECT * FROM scans WHERE scan_id = ? AND user_id = ?", 
+                (scan_id, user_id)
+            )
+            scan_row = cursor.fetchone()
+            
+            if not scan_row:
+                return None
+            
+            cursor.execute(
+                "SELECT * FROM vulnerabilities WHERE scan_id = ? ORDER BY severity, line",
+                (scan_id,)
+            )
+            vuln_rows = cursor.fetchall()
+            
+            scan_dict = dict(scan_row)
+            scan_dict['vulnerabilities'] = [dict(row) for row in vuln_rows]
+            
+            # Parse raw_results JSON if present
+            if scan_dict.get('raw_results'):
+                try:
+                    scan_dict['raw_results'] = json.loads(scan_dict['raw_results'])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            
+            return scan_dict
+    
+    def get_scan_vulnerabilities(self, scan_id: str) -> List[Dict]:
+        """Get all vulnerabilities for a scan"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM vulnerabilities WHERE scan_id = ? ORDER BY severity, line",
+                (scan_id,)
+            )
             return [dict(row) for row in cursor.fetchall()]
+    
+    def update_vulnerability_ai_analysis(self, vuln_id: int, ai_analysis: str) -> bool:
+        """Store AI analysis results for a vulnerability"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE vulnerabilities SET ai_analysis = ? WHERE id = ?",
+                (ai_analysis, vuln_id)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+    
+    def update_scan_ai_analysis(self, scan_id: str, issue_index: int, ai_analysis_json: str) -> bool:
+        """Store AI analysis for a specific issue in a scan's raw_results"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Get existing raw_results
+            cursor.execute("SELECT raw_results FROM scans WHERE scan_id = ?", (scan_id,))
+            row = cursor.fetchone()
+            if not row:
+                return False
+            
+            try:
+                raw = json.loads(row['raw_results']) if row['raw_results'] else {}
+            except (json.JSONDecodeError, TypeError):
+                raw = {}
+            
+            if 'ai_analysis' not in raw:
+                raw['ai_analysis'] = {}
+            raw['ai_analysis'][str(issue_index)] = json.loads(ai_analysis_json)
+            
+            cursor.execute(
+                "UPDATE scans SET raw_results = ? WHERE scan_id = ?",
+                (json.dumps(raw), scan_id)
+            )
+            conn.commit()
+            return True
     
     # ==================== API Key Operations ====================
     
@@ -535,6 +644,55 @@ class Database:
             
             row = cursor.fetchone()
             return (row['fp_count'] or 0) > 0
+    
+    # ==================== User Operations ====================
+    
+    def ensure_user(self, user_id: str, username: str = None, email: str = None):
+        """Create or update a user record (upsert)"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            now = datetime.utcnow().isoformat()
+            
+            cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
+            existing = cursor.fetchone()
+            
+            if existing:
+                # Update last_active
+                cursor.execute(
+                    "UPDATE users SET last_active = ? WHERE user_id = ?",
+                    (now, user_id)
+                )
+            else:
+                cursor.execute("""
+                    INSERT INTO users (user_id, username, email, created_at, last_active)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (user_id, username or user_id, email, now, now))
+            
+            conn.commit()
+    
+    def get_user(self, user_id: str) -> Optional[Dict]:
+        """Get user info"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+    
+    def get_user_summary(self, user_id: str) -> Dict:
+        """Get a complete summary for a user: stats + recent scans + top vulns"""
+        stats = self.get_statistics(user_id)
+        trends = self.get_vulnerability_trends(user_id, days=30)
+        top_vulns = self.get_top_vulnerabilities(user_id, limit=10)
+        recent_scans = self.get_user_scans(user_id, limit=5)
+        user_info = self.get_user(user_id)
+        
+        return {
+            'user': user_info,
+            'statistics': stats,
+            'trends': trends,
+            'top_vulnerabilities': top_vulns,
+            'recent_scans': recent_scans
+        }
 
 
 # Singleton instance
