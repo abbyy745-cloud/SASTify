@@ -3,8 +3,15 @@
   "displayName": "SASTify - AI Security Scanner",
   "description": "AI-powered static application security testing for JavaScript and Python",
   "version": "1.0.0",
+  "publisher": "SASTify",
+  "icon": "icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SASTify/sastify-vscode"
+  },
+  "license": "MIT",
   "engines": {
-    "vscode": "^1.74.0"
+    "vscode": "^1.90.0"
   },
   "categories": [
     "Linters",
@@ -15,7 +22,9 @@
     "onLanguage:python",
     "onCommand:sastify.scanFile",
     "onCommand:sastify.scanSelection",
-    "onCommand:sastify.scanWorkspace"
+    "onCommand:sastify.scanWorkspace",
+    "onCommand:sastify.enterToken",
+    "onCommand:sastify.clearToken"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -38,6 +47,16 @@
       {
         "command": "sastify.showResults",
         "title": "SASTify: Show Scan Results",
+        "category": "SASTify"
+      },
+      {
+        "command": "sastify.enterToken",
+        "title": "SASTify: Enter / Update API Token",
+        "category": "SASTify"
+      },
+      {
+        "command": "sastify.clearToken",
+        "title": "SASTify: Clear Saved Token",
         "category": "SASTify"
       }
     ],
@@ -69,13 +88,8 @@
       "properties": {
         "sastify.apiUrl": {
           "type": "string",
-          "default": "http://localhost:8000",
+          "default": "http://127.0.0.1:8000",
           "description": "SASTify backend API URL"
-        },
-        "sastify.autoScan": {
-          "type": "boolean",
-          "default": false,
-          "description": "Automatically scan on file save"
         }
       }
     }
@@ -86,11 +100,11 @@
     "watch": "tsc -watch -p ./"
   },
   "devDependencies": {
-    "@types/vscode": "^1.74.0",
-    "@types/node": "16.x",
+    "@types/node": "^16.18.126",
+    "@types/vscode": "^1.116.0",
     "typescript": "^4.9.4"
   },
   "dependencies": {
-    "axios": "^1.4.0"
+    "axios": "^1.15.2"
   }
 }

@@ -17,7 +17,7 @@ import glob
 import hashlib
 from typing import List, Dict, Optional
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Add parent to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -251,6 +251,36 @@ class SASTifyCLI:
                 vulns = self._scan_file(filepath, args.verbose)
                 all_vulnerabilities.extend(vulns)
             
+            # Cross-file taint analysis (directory scans, Python/JS only)
+            if os.path.isdir(args.path) and not getattr(args, 'no_cross_file', False):
+                try:
+                    from cross_file_taint import analyze_project
+                    if args.verbose:
+                        print(f"{Fore.CYAN}Running cross-file taint analysis...{Style.RESET_ALL}")
+                    cf_report = analyze_project(args.path)
+                    cf_vulns = cf_report.get('vulnerabilities', [])
+                    for cfv in cf_vulns:
+                        # Convert CrossFileVulnerability dict to standard format
+                        all_vulnerabilities.append({
+                            'type': cfv.get('type', 'cross_file_taint'),
+                            'severity': cfv.get('severity', 'High'),
+                            'confidence': cfv.get('confidence', 0.8),
+                            'file': cfv.get('sink', {}).get('file', cfv.get('source', {}).get('file', '')),
+                            'line': cfv.get('sink', {}).get('line', 0),
+                            'snippet': cfv.get('snippets', {}).get('sink', ''),
+                            'description': f"Cross-file taint: {cfv.get('source', {}).get('type', 'user_input')} flows from {cfv.get('source', {}).get('file', '?')}:{cfv.get('source', {}).get('function', '?')} to {cfv.get('sink', {}).get('name', '?')}",
+                            'scanner': 'cross_file_taint',
+                            'taint_path': cfv.get('path', []),
+                            'edtech': cfv.get('edtech', {}),
+                        })
+                    if args.verbose and cf_vulns:
+                        print(f"{Fore.CYAN}Cross-file taint found {len(cf_vulns)} additional issues{Style.RESET_ALL}")
+                except ImportError:
+                    pass
+                except Exception as e:
+                    if args.verbose:
+                        print(f"{Fore.YELLOW}Cross-file analysis error: {e}{Style.RESET_ALL}")
+
             # Deduplicate across rulesets before any further processing
             before_count = len(all_vulnerabilities)
             all_vulnerabilities = self._deduplicate_vulnerabilities(all_vulnerabilities)
@@ -510,7 +540,7 @@ class SASTifyCLI:
         # Sort by severity to prioritize critical/high issues
         sorted_vulns = sorted(
             vulnerabilities,
-            key=lambda v: self.SEVERITY_ORDER.index(v.get('severity', 'medium').lower())
+            key=lambda v: self._severity_index(v.get('severity', 'medium'))
         )
         
         # Build batch items for concurrent analysis
@@ -627,6 +657,15 @@ class SASTifyCLI:
         elif format == 'summary':
             content = self._format_summary(vulnerabilities, file_count)
         
+        elif format == 'ferpa':
+            try:
+                from ferpa_report import FERPAReportGenerator
+                generator = FERPAReportGenerator(vulnerabilities)
+                content = generator.generate()
+            except ImportError:
+                print(f"{Fore.YELLOW}Warning: FERPA report module not available{Style.RESET_ALL}")
+                content = self._format_html(vulnerabilities, file_count)
+        
         else:
             content = self._format_table(vulnerabilities, file_count)
         
@@ -648,7 +687,7 @@ class SASTifyCLI:
                 severity_counts[sev] += 1
         
         return {
-            'scan_time': datetime.utcnow().isoformat(),
+            'scan_time': datetime.now(timezone.utc).isoformat(),
             'files_scanned': file_count,
             'total_vulnerabilities': len(vulnerabilities),
             'severity_counts': severity_counts,
@@ -699,7 +738,7 @@ class SASTifyCLI:
             # Sort by severity
             sorted_vulns = sorted(
                 vulnerabilities,
-                key=lambda v: self.SEVERITY_ORDER.index(v.get('severity', 'medium').lower())
+                key=lambda v: self._severity_index(v.get('severity', 'medium'))
             )
             
             for vuln in sorted_vulns[:50]:  # Limit output
@@ -1456,7 +1495,7 @@ class SASTifyCLI:
         # Sort by severity
         sorted_vulns = sorted(
             vulnerabilities,
-            key=lambda v: self.SEVERITY_ORDER.index(v.get('severity', 'medium').lower())
+            key=lambda v: self._severity_index(v.get('severity', 'medium'))
         )
         
         for i, vuln in enumerate(sorted_vulns):
@@ -1464,8 +1503,8 @@ class SASTifyCLI:
             vuln_type = vuln.get('type', 'Unknown')
             file_path = vuln.get('file', 'unknown')
             line_num = vuln.get('line', '?')
-            snippet = vuln.get('snippet', '').replace('<', '&lt;').replace('>', '&gt;')
-            desc = vuln.get('description', '').replace('<', '&lt;').replace('>', '&gt;')
+            snippet = self._html_escape(vuln.get('snippet', ''))
+            desc = self._html_escape(vuln.get('description', ''))
             is_ai_analyzed = vuln.get('ai_analyzed', False)
             is_false_positive = vuln.get('ai_is_false_positive', False)
             
@@ -1509,13 +1548,13 @@ class SASTifyCLI:
             
             # Add comprehensive AI Analysis Section
             if is_ai_analyzed:
-                ai_explanation = vuln.get('ai_detailed_explanation', vuln.get('ai_explanation', '')).replace('<', '&lt;').replace('>', '&gt;')
-                ai_summary = vuln.get('ai_vulnerability_summary', '').replace('<', '&lt;').replace('>', '&gt;')
-                ai_fix = vuln.get('ai_fix_suggestion', '').replace('<', '&lt;').replace('>', '&gt;')
+                ai_explanation = self._html_escape(vuln.get('ai_detailed_explanation', vuln.get('ai_explanation', '')))
+                ai_summary = self._html_escape(vuln.get('ai_vulnerability_summary', ''))
+                ai_fix = self._html_escape(vuln.get('ai_fix_suggestion', ''))
                 ai_confidence = vuln.get('ai_confidence', 0.5)
                 ai_risk = vuln.get('ai_risk_level', sev)
                 ai_tests = vuln.get('ai_test_suggestions', [])
-                fp_reason = vuln.get('ai_false_positive_reason', '').replace('<', '&lt;').replace('>', '&gt;')
+                fp_reason = self._html_escape(vuln.get('ai_false_positive_reason', ''))
                 attack_scenario = vuln.get('ai_attack_scenario', {})
                 impact_analysis = vuln.get('ai_impact_analysis', {})
                 remediation_steps = vuln.get('ai_remediation_steps', [])
@@ -1554,9 +1593,9 @@ class SASTifyCLI:
                 
                 # Attack Scenario
                 if attack_scenario and isinstance(attack_scenario, dict):
-                    attack_desc = attack_scenario.get('description', '').replace('<', '&lt;').replace('>', '&gt;')
+                    attack_desc = self._html_escape(attack_scenario.get('description', ''))
                     payloads = attack_scenario.get('example_payloads', [])
-                    attacker_goal = attack_scenario.get('attacker_goal', '').replace('<', '&lt;').replace('>', '&gt;')
+                    attacker_goal = self._html_escape(attack_scenario.get('attacker_goal', ''))
                     
                     if attack_desc:
                         html += f'''
@@ -1571,7 +1610,7 @@ class SASTifyCLI:
                             html += '                        <div class="attack-payloads">\n'
                             for payload in payloads[:5]:
                                 if isinstance(payload, str):
-                                    safe_payload = payload.replace('<', '&lt;').replace('>', '&gt;')[:100]
+                                    safe_payload = self._html_escape(payload)[:100]
                                     html += f'                            <span class="payload-tag">{safe_payload}</span>\n'
                             html += '                        </div>\n'
                         html += '                    </div>\n'
@@ -1586,7 +1625,7 @@ class SASTifyCLI:
                     for impact_key in ['confidentiality', 'integrity', 'availability', 'compliance']:
                         impact_val = impact_analysis.get(impact_key, '')
                         if impact_val:
-                            safe_val = str(impact_val).replace('<', '&lt;').replace('>', '&gt;')
+                            safe_val = self._html_escape(str(impact_val))
                             impact_class = 'high' if 'high' in safe_val.lower() else 'medium' if 'medium' in safe_val.lower() else 'low'
                             html += f'''
                             <div class="impact-card">
@@ -1622,7 +1661,7 @@ class SASTifyCLI:
 '''
                     for step in remediation_steps[:5]:
                         if isinstance(step, str):
-                            safe_step = step.replace('<', '&lt;').replace('>', '&gt;')
+                            safe_step = self._html_escape(step)
                             html += f'                            <li><span>{safe_step}</span></li>\n'
                     html += '''                        </ol>
                     </div>
@@ -1637,11 +1676,11 @@ class SASTifyCLI:
                     for j, test in enumerate(ai_tests):
                         if isinstance(test, dict):
                             test_type = test.get('type', 'unit')
-                            test_name = test.get('name', 'Test Case').replace('<', '&lt;').replace('>', '&gt;')
-                            test_desc = test.get('description', '').replace('<', '&lt;').replace('>', '&gt;')
-                            test_code = test.get('code', '').replace('<', '&lt;').replace('>', '&gt;')
+                            test_name = self._html_escape(test.get('name', 'Test Case'))
+                            test_desc = self._html_escape(test.get('description', ''))
+                            test_code = self._html_escape(test.get('code', ''))
                             test_inputs = test.get('test_inputs', [])
-                            expected = test.get('expected_behavior', '').replace('<', '&lt;').replace('>', '&gt;')
+                            expected = self._html_escape(test.get('expected_behavior', ''))
                             
                             html += f'''
                         <div class="test-case-header" onclick="toggleTest(this)">
@@ -1682,7 +1721,7 @@ class SASTifyCLI:
 '''
                     for ref in security_refs[:5]:
                         if isinstance(ref, str):
-                            safe_ref = ref.replace('<', '&lt;').replace('>', '&gt;')
+                            safe_ref = self._html_escape(ref)
                             html += f'                            <span class="ref-tag">{safe_ref}</span>\n'
                     html += '''                        </div>
                     </div>
@@ -1741,6 +1780,22 @@ class SASTifyCLI:
         """Print error message"""
         print(f"{Fore.RED}✗ Error: {message}{Style.RESET_ALL}", file=sys.stderr)
 
+    @staticmethod
+    def _html_escape(text):
+        """Properly escape text for safe HTML rendering."""
+        if not isinstance(text, str):
+            text = str(text)
+        return (text.replace('&', '&amp;').replace('<', '&lt;')
+                .replace('>', '&gt;').replace('"', '&quot;')
+                .replace("'", '&#x27;'))
+
+    def _severity_index(self, severity_str):
+        """Get severity sort index, defaulting to medium for unknown values."""
+        try:
+            return self.SEVERITY_ORDER.index(severity_str.lower())
+        except (ValueError, AttributeError):
+            return 2  # default to 'medium' position
+
 
 def create_config():
     """Create a sample configuration file"""
@@ -1798,7 +1853,7 @@ Examples:
     scan_parser = subparsers.add_parser('scan', help='Scan files for vulnerabilities')
     scan_parser.add_argument('path', help='File or directory to scan')
     scan_parser.add_argument('-f', '--format', 
-                            choices=['json', 'sarif', 'table', 'html', 'summary'],
+                            choices=['json', 'sarif', 'table', 'html', 'summary', 'ferpa'],
                             default='table',
                             help='Output format (default: table)')
     scan_parser.add_argument('-o', '--output', help='Output file path')
@@ -1825,12 +1880,14 @@ Examples:
                             help='AI analysis mode: fast (concise) or full (comprehensive) (default: fast)')
     scan_parser.add_argument('--test-report',
                             help='Generate a separate test cases HTML report at this path')
+    scan_parser.add_argument('--no-cross-file', action='store_true',
+                            help='Disable cross-file taint analysis for directory scans')
     
     # Init command
     init_parser = subparsers.add_parser('init', help='Create configuration file')
     
     # Version
-    parser.add_argument('--version', action='version', version='SASTify 1.0.0')
+    parser.add_argument('--version', action='version', version='SASTify 2.0.0')
     
     args = parser.parse_args()
     

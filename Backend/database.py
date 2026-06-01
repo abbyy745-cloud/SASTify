@@ -72,33 +72,30 @@ class ApiKey:
 class Database:
     """
     Thread-safe SQLite database manager for SASTify.
-    
+
     Features:
     - Connection pooling per thread
     - Automatic schema migration
     - ACID transactions
     - JSON field support
     """
-    
+
     _local = threading.local()
-    
+
     def __init__(self, db_path: str = None):
         if db_path is None:
-            # Check environment variable first
             db_path = os.environ.get('DATABASE_PATH')
-        
+
         if db_path is None:
-            # Default to user's data directory
             data_dir = os.path.join(os.path.dirname(__file__), '.sastify_data')
             os.makedirs(data_dir, exist_ok=True)
             db_path = os.path.join(data_dir, 'sastify.db')
         else:
-            # Ensure parent directory exists for env-specified path
             os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
-        
+
         self.db_path = db_path
         self._init_schema()
-    
+
     @contextmanager
     def get_connection(self):
         """Get a thread-local database connection"""
@@ -109,20 +106,19 @@ class Database:
                 timeout=30.0
             )
             self._local.connection.row_factory = sqlite3.Row
-            # Enable foreign keys
             self._local.connection.execute("PRAGMA foreign_keys = ON")
-        
+
         try:
             yield self._local.connection
         except Exception as e:
             self._local.connection.rollback()
             raise e
-    
+
     def _init_schema(self):
         """Initialize database schema"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            
+
             # Scans table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS scans (
@@ -138,10 +134,10 @@ class Database:
                     scan_type TEXT DEFAULT 'file',
                     created_at TEXT NOT NULL,
                     code_hash TEXT,
-                    raw_results TEXT  -- JSON blob of full results
+                    raw_results TEXT
                 )
             """)
-            
+
             # Vulnerabilities table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS vulnerabilities (
@@ -162,7 +158,7 @@ class Database:
                     FOREIGN KEY (scan_id) REFERENCES scans(scan_id) ON DELETE CASCADE
                 )
             """)
-            
+
             # API Keys table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS api_keys (
@@ -177,7 +173,7 @@ class Database:
                     scopes TEXT DEFAULT '["scan", "analyze"]'
                 )
             """)
-            
+
             # False positive feedback table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS false_positive_feedback (
@@ -191,7 +187,7 @@ class Database:
                     FOREIGN KEY (vuln_id) REFERENCES vulnerabilities(id)
                 )
             """)
-            
+
             # Analytics cache table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS analytics_cache (
@@ -200,20 +196,37 @@ class Database:
                     expires_at TEXT NOT NULL
                 )
             """)
-            
-            # Users table
+
+            # Users table — now with auth fields
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     user_id TEXT PRIMARY KEY,
                     username TEXT UNIQUE,
-                    email TEXT,
+                    email TEXT UNIQUE,
+                    name TEXT DEFAULT '',
+                    password_hash TEXT DEFAULT '',
+                    token TEXT UNIQUE,
                     created_at TEXT NOT NULL,
                     last_active TEXT,
-                    settings TEXT DEFAULT '{}'  -- JSON blob for user preferences
+                    settings TEXT DEFAULT '{}'
                 )
             """)
-            
-            # Create indexes for performance
+
+            # Add new columns to existing users table if upgrading
+            try:
+                cursor.execute("ALTER TABLE users ADD COLUMN name TEXT DEFAULT ''")
+            except Exception:
+                pass
+            try:
+                cursor.execute("ALTER TABLE users ADD COLUMN password_hash TEXT DEFAULT ''")
+            except Exception:
+                pass
+            try:
+                cursor.execute("ALTER TABLE users ADD COLUMN token TEXT UNIQUE")
+            except Exception:
+                pass
+
+            # Indexes
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_scans_user ON scans(user_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_scans_created ON scans(created_at)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_vulns_scan ON vulnerabilities(scan_id)")
@@ -221,17 +234,48 @@ class Database:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_vulns_severity ON vulnerabilities(severity)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
-            
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_token ON users(token)")
+
             conn.commit()
-    
+
+    # ==================== AUTH Operations (NEW) ====================
+
+    def create_auth_user(self, user_id: str, email: str, name: str, password_hash: str, token: str) -> bool:
+        """Create a new user with full auth details"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            now = datetime.utcnow().isoformat()
+            cursor.execute("""
+                INSERT INTO users (user_id, username, email, name, password_hash, token, created_at, last_active)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (user_id, email, email, name, password_hash, token, now, now))
+            conn.commit()
+            return True
+
+    def get_user_by_email(self, email: str) -> Optional[Dict]:
+        """Get user by email"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM users WHERE email = ?", (email,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_user_by_token(self, token: str) -> Optional[Dict]:
+        """Get user by their API token"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM users WHERE token = ?", (token,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
     # ==================== Scan Operations ====================
-    
+
     def save_scan(self, scan: ScanRecord, vulnerabilities: List[Dict], raw_results: Dict = None) -> str:
         """Save a scan and its vulnerabilities"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            
-            # Insert scan record
+
             cursor.execute("""
                 INSERT INTO scans (
                     scan_id, user_id, filename, language, total_vulnerabilities,
@@ -245,8 +289,7 @@ class Database:
                 scan.created_at, scan.code_hash,
                 json.dumps(raw_results) if raw_results else None
             ))
-            
-            # Insert vulnerabilities
+
             now = datetime.utcnow().isoformat()
             for vuln in vulnerabilities:
                 cursor.execute("""
@@ -269,27 +312,27 @@ class Database:
                     0,
                     now
                 ))
-            
+
             conn.commit()
             return scan.scan_id
-    
+
     def get_scan(self, scan_id: str) -> Optional[Dict]:
         """Get a scan by ID with its vulnerabilities"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            
+
             cursor.execute("SELECT * FROM scans WHERE scan_id = ?", (scan_id,))
             scan_row = cursor.fetchone()
-            
+
             if not scan_row:
                 return None
-            
+
             cursor.execute(
                 "SELECT * FROM vulnerabilities WHERE scan_id = ? ORDER BY severity, line",
                 (scan_id,)
             )
             vuln_rows = cursor.fetchall()
-            
+
             return {
                 'scan_id': scan_row['scan_id'],
                 'user_id': scan_row['user_id'],
@@ -302,63 +345,62 @@ class Database:
                 'low_count': scan_row['low_count'],
                 'scan_type': scan_row['scan_type'],
                 'created_at': scan_row['created_at'],
+                'raw_results': scan_row['raw_results'],
                 'vulnerabilities': [dict(row) for row in vuln_rows]
             }
-    
-    def get_user_scans(self, user_id: str, limit: int = 50, offset: int = 0) -> List[Dict]:
+
+    def get_user_scans(self, user_id: str, limit: int = 50, offset: int = 0) -> Dict:
         """Get recent scans for a user with pagination"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT * FROM scans 
-                WHERE user_id = ? 
-                ORDER BY created_at DESC 
+                SELECT * FROM scans
+                WHERE user_id = ?
+                ORDER BY created_at DESC
                 LIMIT ? OFFSET ?
             """, (user_id, limit, offset))
-            
+
             scans = [dict(row) for row in cursor.fetchall()]
-            
-            # Get total count for pagination
+
             cursor.execute(
                 "SELECT COUNT(*) as total FROM scans WHERE user_id = ?",
                 (user_id,)
             )
             total = cursor.fetchone()['total']
-            
+
             return {'scans': scans, 'total': total, 'limit': limit, 'offset': offset}
-    
+
     def get_user_scan(self, user_id: str, scan_id: str) -> Optional[Dict]:
-        """Get a specific scan only if it belongs to the given user (ownership check)"""
+        """Get a specific scan only if it belongs to the given user"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            
+
             cursor.execute(
-                "SELECT * FROM scans WHERE scan_id = ? AND user_id = ?", 
+                "SELECT * FROM scans WHERE scan_id = ? AND user_id = ?",
                 (scan_id, user_id)
             )
             scan_row = cursor.fetchone()
-            
+
             if not scan_row:
                 return None
-            
+
             cursor.execute(
                 "SELECT * FROM vulnerabilities WHERE scan_id = ? ORDER BY severity, line",
                 (scan_id,)
             )
             vuln_rows = cursor.fetchall()
-            
+
             scan_dict = dict(scan_row)
             scan_dict['vulnerabilities'] = [dict(row) for row in vuln_rows]
-            
-            # Parse raw_results JSON if present
+
             if scan_dict.get('raw_results'):
                 try:
                     scan_dict['raw_results'] = json.loads(scan_dict['raw_results'])
                 except (json.JSONDecodeError, TypeError):
                     pass
-            
+
             return scan_dict
-    
+
     def get_scan_vulnerabilities(self, scan_id: str) -> List[Dict]:
         """Get all vulnerabilities for a scan"""
         with self.get_connection() as conn:
@@ -368,7 +410,7 @@ class Database:
                 (scan_id,)
             )
             return [dict(row) for row in cursor.fetchall()]
-    
+
     def update_vulnerability_ai_analysis(self, vuln_id: int, ai_analysis: str) -> bool:
         """Store AI analysis results for a vulnerability"""
         with self.get_connection() as conn:
@@ -379,46 +421,45 @@ class Database:
             )
             conn.commit()
             return cursor.rowcount > 0
-    
+
     def update_scan_ai_analysis(self, scan_id: str, issue_index: int, ai_analysis_json: str) -> bool:
         """Store AI analysis for a specific issue in a scan's raw_results"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            
-            # Get existing raw_results
+
             cursor.execute("SELECT raw_results FROM scans WHERE scan_id = ?", (scan_id,))
             row = cursor.fetchone()
             if not row:
                 return False
-            
+
             try:
                 raw = json.loads(row['raw_results']) if row['raw_results'] else {}
             except (json.JSONDecodeError, TypeError):
                 raw = {}
-            
+
             if 'ai_analysis' not in raw:
                 raw['ai_analysis'] = {}
             raw['ai_analysis'][str(issue_index)] = json.loads(ai_analysis_json)
-            
+
             cursor.execute(
                 "UPDATE scans SET raw_results = ? WHERE scan_id = ?",
                 (json.dumps(raw), scan_id)
             )
             conn.commit()
             return True
-    
+
     # ==================== API Key Operations ====================
-    
-    def create_api_key(self, user_id: str, name: str = "Default", 
+
+    def create_api_key(self, user_id: str, name: str = "Default",
                        rate_limit: int = 100, scopes: List[str] = None) -> tuple:
         """Create a new API key. Returns (key_id, raw_key)"""
         raw_key = secrets.token_urlsafe(32)
         key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
         key_id = secrets.token_urlsafe(8)
-        
+
         if scopes is None:
             scopes = ["scan", "analyze", "report"]
-        
+
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
@@ -432,40 +473,38 @@ class Database:
                 1, rate_limit, json.dumps(scopes)
             ))
             conn.commit()
-        
-        # Return full key (only shown once)
+
         return key_id, f"sast_{key_id}_{raw_key}"
-    
+
     def validate_api_key(self, raw_key: str) -> Optional[Dict]:
         """Validate an API key and return its info"""
         if not raw_key or not raw_key.startswith('sast_'):
             return None
-        
+
         try:
             parts = raw_key.split('_', 2)
             if len(parts) != 3:
                 return None
-            
+
             key_id = parts[1]
             key_secret = parts[2]
             key_hash = hashlib.sha256(key_secret.encode()).hexdigest()
-            
+
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
-                    SELECT * FROM api_keys 
+                    SELECT * FROM api_keys
                     WHERE key_id = ? AND key_hash = ? AND is_active = 1
                 """, (key_id, key_hash))
-                
+
                 row = cursor.fetchone()
                 if row:
-                    # Update last used
                     cursor.execute(
                         "UPDATE api_keys SET last_used = ? WHERE key_id = ?",
                         (datetime.utcnow().isoformat(), key_id)
                     )
                     conn.commit()
-                    
+
                     return {
                         'key_id': row['key_id'],
                         'user_id': row['user_id'],
@@ -474,32 +513,32 @@ class Database:
                     }
         except Exception:
             pass
-        
+
         return None
-    
+
     def revoke_api_key(self, key_id: str, user_id: str) -> bool:
         """Revoke an API key"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                UPDATE api_keys SET is_active = 0 
+                UPDATE api_keys SET is_active = 0
                 WHERE key_id = ? AND user_id = ?
             """, (key_id, user_id))
             conn.commit()
             return cursor.rowcount > 0
-    
+
     # ==================== Analytics Operations ====================
-    
+
     def get_vulnerability_trends(self, user_id: str = None, days: int = 30) -> Dict:
         """Get vulnerability trends over time"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            
+
             cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
-            
+
             if user_id:
                 cursor.execute("""
-                    SELECT 
+                    SELECT
                         date(created_at) as scan_date,
                         SUM(critical_count) as critical,
                         SUM(high_count) as high,
@@ -513,7 +552,7 @@ class Database:
                 """, (user_id, cutoff))
             else:
                 cursor.execute("""
-                    SELECT 
+                    SELECT
                         date(created_at) as scan_date,
                         SUM(critical_count) as critical,
                         SUM(high_count) as high,
@@ -525,7 +564,7 @@ class Database:
                     GROUP BY date(created_at)
                     ORDER BY scan_date
                 """, (cutoff,))
-            
+
             trends = []
             for row in cursor.fetchall():
                 trends.append({
@@ -536,17 +575,17 @@ class Database:
                     'low': row['low'] or 0,
                     'scans': row['scan_count']
                 })
-            
+
             return {'trends': trends, 'days': days}
-    
+
     def get_top_vulnerabilities(self, user_id: str = None, limit: int = 10) -> List[Dict]:
         """Get most common vulnerability types"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            
+
             if user_id:
                 cursor.execute("""
-                    SELECT 
+                    SELECT
                         v.vuln_type,
                         v.severity,
                         COUNT(*) as count
@@ -559,7 +598,7 @@ class Database:
                 """, (user_id, limit))
             else:
                 cursor.execute("""
-                    SELECT 
+                    SELECT
                         vuln_type,
                         severity,
                         COUNT(*) as count
@@ -569,17 +608,17 @@ class Database:
                     ORDER BY count DESC
                     LIMIT ?
                 """, (limit,))
-            
+
             return [dict(row) for row in cursor.fetchall()]
-    
+
     def get_statistics(self, user_id: str = None) -> Dict:
         """Get overall statistics"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            
+
             if user_id:
                 cursor.execute("""
-                    SELECT 
+                    SELECT
                         COUNT(*) as total_scans,
                         SUM(total_vulnerabilities) as total_vulns,
                         SUM(critical_count) as total_critical,
@@ -588,50 +627,49 @@ class Database:
                 """, (user_id,))
             else:
                 cursor.execute("""
-                    SELECT 
+                    SELECT
                         COUNT(*) as total_scans,
                         SUM(total_vulnerabilities) as total_vulns,
                         SUM(critical_count) as total_critical,
                         SUM(high_count) as total_high
                     FROM scans
                 """)
-            
+
             row = cursor.fetchone()
-            
+
             return {
                 'total_scans': row['total_scans'] or 0,
                 'total_vulnerabilities': row['total_vulns'] or 0,
                 'total_critical': row['total_critical'] or 0,
                 'total_high': row['total_high'] or 0
             }
-    
+
     # ==================== False Positive Operations ====================
-    
-    def record_false_positive(self, vuln_id: int, fingerprint: str, 
+
+    def record_false_positive(self, vuln_id: int, fingerprint: str,
                               is_fp: bool, comment: str = "", user_id: str = None):
         """Record false positive feedback"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            
+
             cursor.execute("""
                 INSERT INTO false_positive_feedback (
-                    vuln_id, fingerprint, is_false_positive, 
+                    vuln_id, fingerprint, is_false_positive,
                     user_comment, user_id, created_at
                 ) VALUES (?, ?, ?, ?, ?, ?)
             """, (
                 vuln_id, fingerprint, 1 if is_fp else 0,
                 comment, user_id, datetime.utcnow().isoformat()
             ))
-            
-            # Update vulnerability record
+
             if vuln_id:
                 cursor.execute(
                     "UPDATE vulnerabilities SET is_false_positive = ? WHERE id = ?",
                     (1 if is_fp else 0, vuln_id)
                 )
-            
+
             conn.commit()
-    
+
     def is_known_false_positive(self, fingerprint: str) -> bool:
         """Check if a fingerprint is a known false positive"""
         with self.get_connection() as conn:
@@ -641,23 +679,22 @@ class Database:
                 FROM false_positive_feedback
                 WHERE fingerprint = ? AND is_false_positive = 1
             """, (fingerprint,))
-            
+
             row = cursor.fetchone()
             return (row['fp_count'] or 0) > 0
-    
+
     # ==================== User Operations ====================
-    
+
     def ensure_user(self, user_id: str, username: str = None, email: str = None):
         """Create or update a user record (upsert)"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             now = datetime.utcnow().isoformat()
-            
+
             cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
             existing = cursor.fetchone()
-            
+
             if existing:
-                # Update last_active
                 cursor.execute(
                     "UPDATE users SET last_active = ? WHERE user_id = ?",
                     (now, user_id)
@@ -667,9 +704,9 @@ class Database:
                     INSERT INTO users (user_id, username, email, created_at, last_active)
                     VALUES (?, ?, ?, ?, ?)
                 """, (user_id, username or user_id, email, now, now))
-            
+
             conn.commit()
-    
+
     def get_user(self, user_id: str) -> Optional[Dict]:
         """Get user info"""
         with self.get_connection() as conn:
@@ -677,7 +714,25 @@ class Database:
             cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
             row = cursor.fetchone()
             return dict(row) if row else None
-    
+
+    def get_all_users(self) -> List[Dict]:
+        """Get all users with their scan statistics"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT
+                    u.user_id,
+                    u.username,
+                    u.email,
+                    COUNT(s.scan_id) as total_scans,
+                    COALESCE(SUM(s.total_vulnerabilities), 0) as total_issues
+                FROM users u
+                LEFT JOIN scans s ON u.user_id = s.user_id
+                GROUP BY u.user_id
+                ORDER BY total_scans DESC
+            """)
+            return [dict(row) for row in cursor.fetchall()]
+
     def get_user_summary(self, user_id: str) -> Dict:
         """Get a complete summary for a user: stats + recent scans + top vulns"""
         stats = self.get_statistics(user_id)
@@ -685,7 +740,7 @@ class Database:
         top_vulns = self.get_top_vulnerabilities(user_id, limit=10)
         recent_scans = self.get_user_scans(user_id, limit=5)
         user_info = self.get_user(user_id)
-        
+
         return {
             'user': user_info,
             'statistics': stats,

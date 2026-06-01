@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>$title</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #f8fafc;
+            --bg-secondary: #ffffff;
+            --bg-card: #ffffff;
+            --bg-glass: #f1f5f9;
+            --text-primary: #1e293b;
+            --text-secondary: #64748b;
+            --text-muted: #94a3b8;
+            --accent-primary: #6366f1;
+            --accent-secondary: #8b5cf6;
+            --accent-gradient: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+            --critical: #dc2626;
+            --high: #ea580c;
+            --medium: #ca8a04;
+            --low: #2563eb;
+            --info: #0891b2;
+            --success: #16a34a;
+            --border: #e2e8f0;
+            --border-hover: #cbd5e1;
+            --shadow: 0 1px 3px rgba(0,0,0,0.1), 0 1px 2px rgba(0,0,0,0.06);
+            --shadow-lg: 0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -2px rgba(0,0,0,0.05);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        /* Header */
+        .header {
+            text-align: center;
+            padding: 2.5rem 0;
+            margin-bottom: 2rem;
+        }
+
+        .logo {
+            font-size: 2.5rem;
+            font-weight: 700;
+            background: var(--accent-gradient);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 0.5rem;
+        }
+
+        .subtitle {
+            color: var(--text-secondary);
+            font-size: 1rem;
+            font-weight: 400;
+        }
+
+        .timestamp {
+            color: var(--text-muted);
+            font-size: 0.85rem;
+            margin-top: 0.75rem;
+        }
+
+        /* Risk Score Card */
+        .risk-score-section {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 2rem;
+        }
+
+        .risk-score-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 1.5rem 3rem;
+            text-align: center;
+            box-shadow: var(--shadow);
+        }
+
+        .risk-grade {
+            font-size: 4rem;
+            font-weight: 700;
+            line-height: 1;
+            margin-bottom: 0.25rem;
+        }
+
+        .risk-grade.grade-a { color: var(--success); }
+        .risk-grade.grade-b { color: var(--low); }
+        .risk-grade.grade-c { color: var(--medium); }
+        .risk-grade.grade-d { color: var(--high); }
+        .risk-grade.grade-f { color: var(--critical); }
+
+        .risk-label {
+            color: var(--text-secondary);
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .stat-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.25rem;
+            text-align: center;
+            box-shadow: var(--shadow);
+            transition: all 0.2s ease;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-lg);
+        }
+
+        .stat-card.critical { border-top: 3px solid var(--critical); }
+        .stat-card.high { border-top: 3px solid var(--high); }
+        .stat-card.medium { border-top: 3px solid var(--medium); }
+        .stat-card.low { border-top: 3px solid var(--low); }
+        .stat-card.ai { border-top: 3px solid var(--accent-primary); }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            line-height: 1.2;
+        }
+
+        .stat-label {
+            color: var(--text-secondary);
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-top: 0.25rem;
+        }
+
+        /* Section Headers */
+        .section-header {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin: 2rem 0 1.5rem;
+            padding-bottom: 0.75rem;
+            border-bottom: 2px solid var(--border);
+        }
+
+        .section-header h2 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .section-header .count {
+            background: var(--accent-primary);
+            color: white;
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 0.2rem 0.6rem;
+            border-radius: 999px;
+        }
+
+        /* Vulnerability Cards */
+        .vuln-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            margin-bottom: 1.25rem;
+            overflow: hidden;
+            box-shadow: var(--shadow);
+            transition: all 0.2s ease;
+            animation: fadeIn 0.3s ease forwards;
+        }
+
+        .vuln-card:hover {
+            box-shadow: var(--shadow-lg);
+        }
+
+        .vuln-card.critical { border-left: 4px solid var(--critical); }
+        .vuln-card.high { border-left: 4px solid var(--high); }
+        .vuln-card.medium { border-left: 4px solid var(--medium); }
+        .vuln-card.low { border-left: 4px solid var(--low); }
+        .vuln-card.false-positive { opacity: 0.75; border-left-color: var(--success); }
+
+        .vuln-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            padding: 1.25rem;
+            background: var(--bg-glass);
+            flex-wrap: wrap;
+            gap: 0.75rem;
+        }
+
+        .vuln-title {
+            display: flex;
+            flex-direction: column;
+            gap: 0.35rem;
+        }
+
+        .vuln-type {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .vuln-location {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+        }
+
+        .badges {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+
+        .badge {
+            font-size: 0.65rem;
+            font-weight: 600;
+            padding: 0.3rem 0.6rem;
+            border-radius: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .badge.critical { background: var(--critical); color: white; }
+        .badge.high { background: var(--high); color: white; }
+        .badge.medium { background: var(--medium); color: white; }
+        .badge.low { background: var(--low); color: white; }
+        .badge.ai { background: var(--accent-primary); color: white; }
+        .badge.fp { background: var(--success); color: white; }
+
+        .vuln-body {
+            padding: 1.25rem;
+        }
+
+        .vuln-desc {
+            color: var(--text-secondary);
+            margin-bottom: 1rem;
+            font-size: 0.95rem;
+            line-height: 1.6;
+        }
+
+        /* Code Snippet */
+        .code-block {
+            background: #1e293b;
+            border-radius: 8px;
+            overflow: hidden;
+            margin: 1rem 0;
+        }
+
+        .code-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.6rem 1rem;
+            background: #334155;
+            border-bottom: 1px solid #475569;
+        }
+
+        .code-lang {
+            font-size: 0.7rem;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .copy-btn {
+            background: transparent;
+            border: 1px solid #475569;
+            color: #94a3b8;
+            padding: 0.25rem 0.6rem;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .copy-btn:hover {
+            background: var(--accent-primary);
+            border-color: var(--accent-primary);
+            color: white;
+        }
+
+        .code-content {
+            padding: 1rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            line-height: 1.5;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            color: #e2e8f0;
+        }
+
+        /* AI Analysis Sections */
+        .ai-analysis {
+            margin-top: 1.25rem;
+            padding-top: 1.25rem;
+            border-top: 1px solid var(--border);
+        }
+
+        .ai-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--accent-primary);
+            margin-bottom: 1rem;
+        }
+
+        .ai-header::before {
+            content: '🤖';
+        }
+
+        /* Info Boxes */
+        .info-box {
+            background: #f0f4ff;
+            border: 1px solid #c7d2fe;
+            border-radius: 8px;
+            padding: 1rem;
+            margin: 0.75rem 0;
+        }
+
+        .info-box.danger {
+            background: #fef2f2;
+            border-color: #fecaca;
+        }
+
+        .info-box.success {
+            background: #f0fdf4;
+            border-color: #bbf7d0;
+        }
+
+        .info-box.warning {
+            background: #fefce8;
+            border-color: #fef08a;
+        }
+
+        .info-box-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: var(--text-primary);
+            font-size: 0.9rem;
+        }
+
+        .info-box-content {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            line-height: 1.6;
+        }
+
+        .info-box-content p {
+            margin-bottom: 0.5rem;
+        }
+
+        .info-box-content p:last-child {
+            margin-bottom: 0;
+        }
+
+        /* Confidence Bar */
+        .confidence-row {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin: 1rem 0;
+        }
+
+        .confidence-bar {
+            flex: 1;
+            height: 6px;
+            background: var(--bg-glass);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        .confidence-fill {
+            height: 100%;
+            background: var(--accent-gradient);
+            border-radius: 3px;
+            transition: width 0.5s ease;
+        }
+
+        .confidence-text {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            min-width: 60px;
+        }
+
+        /* Remediation Steps */
+        .remediation-steps {
+            list-style: none;
+            counter-reset: step;
+            margin: 0.75rem 0;
+        }
+
+        .remediation-steps li {
+            counter-increment: step;
+            display: flex;
+            gap: 0.75rem;
+            margin-bottom: 0.75rem;
+            padding: 0.75rem;
+            background: #f0fdf4;
+            border-radius: 8px;
+            border-left: 3px solid var(--success);
+            font-size: 0.9rem;
+        }
+
+        .remediation-steps li::before {
+            content: counter(step);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 24px;
+            height: 24px;
+            background: var(--success);
+            color: white;
+            font-weight: 600;
+            font-size: 0.75rem;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        /* Security References */
+        .security-refs {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-top: 0.75rem;
+        }
+
+        .ref-tag {
+            background: #ede9fe;
+            border: 1px solid #c4b5fd;
+            color: var(--accent-primary);
+            font-size: 0.75rem;
+            padding: 0.3rem 0.6rem;
+            border-radius: 4px;
+        }
+
+        /* Footer */
+        .footer {
+            text-align: center;
+            padding: 2rem 0;
+            margin-top: 2rem;
+            border-top: 1px solid var(--border);
+            color: var(--text-muted);
+            font-size: 0.9rem;
+        }
+
+        .footer a {
+            color: var(--accent-primary);
+            text-decoration: none;
+        }
+
+        .footer a:hover {
+            text-decoration: underline;
+        }
+
+        /* Animations */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .container { padding: 1rem; }
+            .risk-score-card { padding: 1rem 2rem; }
+            .risk-grade { font-size: 3rem; }
+            .stats-grid { grid-template-columns: repeat(2, 1fr); }
+            .vuln-header { flex-direction: column; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1 class="logo">SASTify</h1>
+            <p class="subtitle">AI-Powered Security Analysis Report</p>
+            <p class="timestamp">Generated: $scan_date</p>
+        </header>
+
+        <div class="risk-score-section">
+            <div class="risk-score-card">
+                <div class="risk-grade grade-$risk_grade">$risk_grade_letter</div>
+                <div class="risk-label">Security Grade</div>
+            </div>
+        </div>
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-value">$files_scanned</div>
+                <div class="stat-label">Files Scanned</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">$total_vulnerabilities</div>
+                <div class="stat-label">Total Issues</div>
+            </div>
+            <div class="stat-card critical">
+                <div class="stat-value">$critical_count</div>
+                <div class="stat-label">Critical</div>
+            </div>
+            <div class="stat-card high">
+                <div class="stat-value">$high_count</div>
+                <div class="stat-label">High</div>
+            </div>
+            <div class="stat-card medium">
+                <div class="stat-value">$medium_count</div>
+                <div class="stat-label">Medium</div>
+            </div>
+            <div class="stat-card low">
+                <div class="stat-value">$low_count</div>
+                <div class="stat-label">Low</div>
+            </div>
+            <div class="stat-card ai">
+                <div class="stat-value">$ai_analyzed_count</div>
+                <div class="stat-label">AI Analyzed</div>
+            </div>
+            <div class="stat-card ai">
+                <div class="stat-value">$ai_confirmed_count</div>
+                <div class="stat-label">Confirmed</div>
+            </div>
+        </div>
+
+        <div class="section-header">
+            <h2>🔍 Vulnerability Details</h2>
+            <span class="count">$total_vulnerabilities issues</span>
+        </div>
+
+$vulnerability_cards
+
+        <footer class="footer">
+            <p>Generated by <a href="https://github.com/abbyy745-cloud/SASTify">SASTify</a> v$version — AI-Powered Security Analysis</p>
+            <p style="margin-top: 0.5rem; font-size: 0.8rem;">Protecting your code, one vulnerability at a time 🛡️</p>
+            <p style="margin-top: 0.3rem; font-size: 0.75rem; color: var(--text-muted);">Scan completed in $scan_duration</p>
+        </footer>
+    </div>
+
+    <script>
+        function copyCode(btn) {
+            const codeContent = btn.closest('.code-block').querySelector('.code-content');
+            const text = codeContent.textContent;
+            navigator.clipboard.writeText(text).then(() => {
+                const originalText = btn.textContent;
+                btn.textContent = '✓ Copied!';
+                btn.style.background = 'var(--success)';
+                btn.style.borderColor = 'var(--success)';
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                    btn.style.background = '';
+                    btn.style.borderColor = '';
+                }, 2000);
+            });
+        }
+
+        function toggleTest(header) {
+            const content = header.nextElementSibling;
+            header.classList.toggle('active');
+            content.classList.toggle('show');
+        }
+
+        // Auto-expand first test case in each vulnerability
+        document.querySelectorAll('.test-cases-section').forEach(section => {
+            const firstHeader = section.querySelector('.test-case-header');
+            if (firstHeader) {
+                firstHeader.click();
+            }
+        });
+    </script>
+</body>
+</html>

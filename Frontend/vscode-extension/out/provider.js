@@ -30,276 +30,255 @@ exports.SASTifyProvider = void 0;
 const vscode = __importStar(require("vscode"));
 const axios_1 = __importDefault(require("axios"));
 const resultsPanel_1 = require("./webview/resultsPanel");
+// Key used to persist the token across VS Code sessions
+const TOKEN_KEY = 'sastify.authToken';
+// Timeout for AI analysis requests (30 seconds)
+const AI_TIMEOUT_MS = 30000;
 class SASTifyProvider {
-    constructor(extensionUri) {
+    constructor(extensionUri, context) {
         this.currentScanId = null;
+        /** Track which issue indices currently have an AI request in-flight */
+        this._aiInFlight = new Set();
         const config = vscode.workspace.getConfiguration('sastify');
-        // Use 127.0.0.1 to avoid IPv6 localhost issues
         this.apiUrl = config.get('apiUrl', 'http://127.0.0.1:8000');
         this.outputChannel = vscode.window.createOutputChannel('SASTify');
         this.extensionUri = extensionUri;
-        this.outputChannel.appendLine(`Initialized with API URL: ${this.apiUrl}`);
+        this.context = context;
+        this.outputChannel.appendLine(`SASTify initialised. API: ${this.apiUrl}`);
     }
-    async scanCurrentFile() {
-        this.outputChannel.show(true);
-        this.outputChannel.appendLine('Starting scan of current file...');
-        const editor = vscode.window.activeTextEditor;
-        if (!editor) {
-            vscode.window.showErrorMessage('No active editor found');
-            this.outputChannel.appendLine('Error: No active editor found');
+    // ─────────────────────────────────────────────────────────────────────────
+    // TOKEN — stored in globalState, prompted only once per machine
+    // ─────────────────────────────────────────────────────────────────────────
+    /**
+     * Returns the stored token. If none exists, prompts the user ONCE and
+     * persists it for all future sessions. Never prompts again unless the
+     * user explicitly calls `sastify.enterToken`.
+     */
+    async getToken() {
+        // 1. Try global state first (survives VS Code restarts)
+        const stored = this.context.globalState.get(TOKEN_KEY);
+        if (stored && stored.trim().length > 0) {
+            this.outputChannel.appendLine('🔑 Using stored token.');
+            return stored;
+        }
+        // 2. Only prompt if no token has been saved yet
+        this.outputChannel.appendLine('🔑 No token found — prompting user once…');
+        const entered = await vscode.window.showInputBox({
+            title: 'SASTify — Enter Your API Token',
+            prompt: 'Paste the token from your SASTify dashboard. It will be saved and never asked again.',
+            ignoreFocusOut: true,
+            password: true,
+            placeHolder: 'Paste your SASTify token here…'
+        });
+        if (!entered || entered.trim().length === 0) {
+            vscode.window.showWarningMessage('SASTify: No token entered. Scan cancelled.');
+            return undefined;
+        }
+        const trimmed = entered.trim();
+        await this.context.globalState.update(TOKEN_KEY, trimmed);
+        this.outputChannel.appendLine('✅ Token saved to global state.');
+        vscode.window.showInformationMessage('SASTify: Token saved! You won\'t be asked again.');
+        return trimmed;
+    }
+    /**
+     * Allows the user to manually update / reset their token.
+     * Called by the `sastify.enterToken` command.
+     */
+    async promptForNewToken() {
+        const entered = await vscode.window.showInputBox({
+            title: 'SASTify — Update API Token',
+            prompt: 'Paste your new SASTify token. The old token will be replaced.',
+            ignoreFocusOut: true,
+            password: true,
+            placeHolder: 'Paste your SASTify token here…'
+        });
+        if (!entered || entered.trim().length === 0) {
+            vscode.window.showWarningMessage('SASTify: Token not updated.');
             return;
         }
-        const document = editor.document;
-        await this.scanDocument(document, 'full');
+        await this.context.globalState.update(TOKEN_KEY, entered.trim());
+        vscode.window.showInformationMessage('SASTify: Token updated successfully!');
+    }
+    /**
+     * Clears the stored token (useful for logout / token rotation).
+     */
+    async clearToken() {
+        await this.context.globalState.update(TOKEN_KEY, undefined);
+        vscode.window.showInformationMessage('SASTify: Token cleared. You will be prompted on next scan.');
+    }
+    /** Internal helper — builds auth headers, throws if no token available. */
+    async getAuthHeaders() {
+        const token = await this.getToken();
+        if (!token) {
+            throw new Error('No SASTify token available.');
+        }
+        return {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+        };
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+    // SCAN COMMANDS
+    // ─────────────────────────────────────────────────────────────────────────
+    async scanCurrentFile() {
+        this.outputChannel.appendLine('📄 scanCurrentFile triggered');
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+            vscode.window.showErrorMessage('SASTify: No active editor found.');
+            return;
+        }
+        await this.scanDocument(editor.document, 'full');
     }
     async scanSelection() {
-        this.outputChannel.show(true);
-        this.outputChannel.appendLine('Starting scan of selection...');
+        this.outputChannel.appendLine('✂ scanSelection triggered');
         const editor = vscode.window.activeTextEditor;
         if (!editor) {
-            vscode.window.showErrorMessage('No active editor found');
+            vscode.window.showErrorMessage('SASTify: No active editor found.');
             return;
         }
-        const selection = editor.selection;
-        if (selection.isEmpty) {
-            vscode.window.showErrorMessage('No code selected');
+        if (editor.selection.isEmpty) {
+            vscode.window.showErrorMessage('SASTify: No code selected.');
             return;
         }
-        const document = editor.document;
-        const selectedText = document.getText(selection);
-        await this.scanCodeSnippet(selectedText, document.languageId, 'selection');
+        await this.scanCodeSnippet(editor.document.getText(editor.selection), editor.document.languageId, 'selection');
     }
     async scanWorkspace() {
-        this.outputChannel.show(true);
-        this.outputChannel.appendLine('Starting workspace scan...');
+        this.outputChannel.appendLine('📁 scanWorkspace triggered');
         const files = await vscode.workspace.findFiles('**/*.{js,ts,py}', '**/node_modules/**');
         if (files.length === 0) {
-            vscode.window.showInformationMessage('No supported files found in workspace.');
+            vscode.window.showInformationMessage('SASTify: No supported files found.');
             return;
         }
-        this.outputChannel.appendLine(`Found ${files.length} files to scan.`);
-        vscode.window.withProgress({
-            location: vscode.ProgressLocation.Notification,
-            title: `SASTify: Scanning Workspace (${files.length} files)...`,
-            cancellable: true
-        }, async (progress, token) => {
-            const startTime = Date.now();
-            // Step 1: Collect all files data
-            progress.report({ message: 'Collecting files...', increment: 0 });
-            const filesData = [];
-            for (const file of files) {
-                if (token.isCancellationRequested) {
-                    this.outputChannel.appendLine('Scan cancelled by user.');
-                    return;
-                }
-                try {
-                    const document = await vscode.workspace.openTextDocument(file);
-                    const language = this.mapLanguageId(document.languageId);
-                    if (language) {
-                        filesData.push({
-                            code: document.getText(),
-                            language: language,
-                            filename: vscode.workspace.asRelativePath(file)
-                        });
-                    }
-                }
-                catch (error) {
-                    this.outputChannel.appendLine(`Error reading file ${file.fsPath}: ${error}`);
-                }
-            }
-            if (filesData.length === 0) {
-                vscode.window.showInformationMessage('No supported files found in workspace.');
-                return;
-            }
-            // Step 2: Send batch request
-            progress.report({ message: `Scanning ${filesData.length} files...`, increment: 50 });
-            this.outputChannel.appendLine(`Sending batch scan request for ${filesData.length} files...`);
-            try {
-                const response = await axios_1.default.post(`${this.apiUrl}/api/scan-batch`, {
-                    files: filesData,
-                    user_id: 'vscode_user'
-                }, {
-                    timeout: 120000 // 2 minute timeout for batch operations
+        const filesData = [];
+        for (const file of files) {
+            const doc = await vscode.workspace.openTextDocument(file);
+            const language = this.mapLanguageId(doc.languageId);
+            if (language) {
+                filesData.push({
+                    code: doc.getText(),
+                    language,
+                    filename: vscode.workspace.asRelativePath(file)
                 });
-                progress.report({ increment: 100 });
-                const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
-                if (response.data.success) {
-                    // Use the scan_id from backend response so AI analysis works
-                    this.currentScanId = response.data.scan_id;
-                    const result = {
-                        ...response.data,
-                        metrics: {
-                            ...response.data.metrics,
-                            scan_time: `${totalTime}s`
-                        }
-                    };
-                    this.outputChannel.appendLine(`Workspace scan completed. Found ${result.metrics.filtered_issues} issues in ${result.metrics.files_scanned} files.`);
-                    // Show results
-                    if (result.issues.length > 0) {
-                        this.showResults(result);
-                    }
-                    else {
-                        vscode.window.showInformationMessage('SASTify: No security issues found in workspace.');
-                    }
-                }
-                else {
-                    const errorMsg = `Batch scan failed: ${response.data.error}`;
-                    vscode.window.showErrorMessage(errorMsg);
-                    this.outputChannel.appendLine(errorMsg);
-                }
             }
-            catch (error) {
-                let errorMsg = `SASTify batch scan failed: ${error.message}`;
-                if (axios_1.default.isAxiosError(error)) {
-                    if (error.code === 'ECONNABORTED') {
-                        errorMsg = `Connection timed out connecting to ${this.apiUrl}. Is the backend running?`;
-                    }
-                    else if (error.code === 'ECONNREFUSED') {
-                        errorMsg = `Connection refused at ${this.apiUrl}. Is the backend running?`;
-                    }
-                    else if (error.response?.status === 429) {
-                        errorMsg = `Rate limit exceeded. Please wait a moment and try again.`;
-                    }
-                }
-                this.outputChannel.appendLine(errorMsg);
-                vscode.window.showErrorMessage(errorMsg);
-            }
-        });
+        }
+        try {
+            const headers = await this.getAuthHeaders();
+            const response = await axios_1.default.post(`${this.apiUrl}/api/scan-batch`, { files: filesData }, { headers, timeout: 60000 });
+            this.currentScanId = response.data.scan_id;
+            this.showResults(response.data);
+        }
+        catch (error) {
+            this.outputChannel.appendLine('❌ scanWorkspace error: ' + error.message);
+            vscode.window.showErrorMessage('SASTify scan error: ' + error.message);
+        }
     }
     async scanDocument(document, scanType) {
-        const code = document.getText();
         const language = this.mapLanguageId(document.languageId);
         if (!language) {
-            const msg = `Unsupported language: ${document.languageId}`;
-            vscode.window.showErrorMessage(msg);
-            this.outputChannel.appendLine(msg);
+            vscode.window.showErrorMessage('SASTify: Unsupported language: ' + document.languageId);
             return;
         }
-        await this.performScan(code, language, scanType, vscode.workspace.asRelativePath(document.uri));
+        await this.performScan(document.getText(), language, scanType, vscode.workspace.asRelativePath(document.uri));
     }
     async scanCodeSnippet(code, languageId, scanType) {
         const language = this.mapLanguageId(languageId);
         if (!language) {
-            vscode.window.showErrorMessage(`Unsupported language: ${languageId}`);
             return;
         }
         await this.performScan(code, language, scanType, 'Selection');
     }
     async performScan(code, language, scanType, filename) {
-        vscode.window.withProgress({
-            location: vscode.ProgressLocation.Notification,
-            title: `SASTify: Scanning ${scanType}...`,
-            cancellable: false
-        }, async (progress) => {
-            progress.report({ increment: 0 });
-            const result = await this.scanCodeInternal(code, language, filename);
-            progress.report({ increment: 100 });
-            if (result && result.success) {
-                this.showResults(result);
-            }
-            else if (result) {
-                const errorMsg = `Scan failed: ${result.error}`;
-                vscode.window.showErrorMessage(errorMsg);
-            }
-        });
+        this.outputChannel.appendLine(`⚡ performScan [${language}] ${filename}`);
+        const result = await this.scanCodeInternal(code, language, filename);
+        if (result && result.success) {
+            this.showResults(result);
+        }
     }
     async scanCodeInternal(code, language, filename) {
         try {
-            this.outputChannel.appendLine(`Scanning ${filename} (${code.length} bytes)...`);
-            const scanId = `vscode_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-            this.currentScanId = scanId;
-            const response = await axios_1.default.post(`${this.apiUrl}/api/scan`, {
-                code: code,
-                language: language,
-                filename: filename,
-                scan_id: scanId,
-                user_id: 'vscode_user'
-            }, {
-                timeout: 10000 // 10 second timeout
-            });
-            if (response.data.success) {
-                // Add filename to issues
-                const issues = response.data.issues.map((issue) => ({
-                    ...issue,
-                    file: filename
-                }));
-                return {
-                    ...response.data,
-                    issues: issues
-                };
-            }
-            else {
-                return { success: false, error: response.data.error };
-            }
-        }
-        catch (error) {
-            let errorMsg = `SASTify scan failed: ${error.message}`;
-            if (axios_1.default.isAxiosError(error)) {
-                if (error.code === 'ECONNABORTED') {
-                    errorMsg = `Connection timed out connecting to ${this.apiUrl}. Is the backend running?`;
-                }
-                else if (error.code === 'ECONNREFUSED') {
-                    errorMsg = `Connection refused at ${this.apiUrl}. Is the backend running?`;
-                }
-            }
-            this.outputChannel.appendLine(errorMsg);
-            return { success: false, error: errorMsg };
-        }
-    }
-    showResults(results) {
-        this.outputChannel.appendLine(`Scan successful. Found ${results.metrics.filtered_issues} issues.`);
-        // Highlight issues in editor
-        vscode.commands.executeCommand('sastify.highlightIssues', results.issues);
-        // Show results in webview
-        resultsPanel_1.ResultsPanel.createOrShow(vscode.Uri.joinPath(this.extensionUri, 'media'), results, this);
-        vscode.window.showInformationMessage(`SASTify found ${results.metrics.filtered_issues} security issues`, 'View Details').then(selection => {
-            if (selection === 'View Details') {
-                resultsPanel_1.ResultsPanel.show(this.extensionUri);
-            }
-        });
-    }
-    async analyzeIssueWithAI(issueIndex, codeSnippet) {
-        if (!this.currentScanId) {
-            this.currentScanId = `fallback_${Date.now()}`;
-        }
-        try {
-            const response = await axios_1.default.post(`${this.apiUrl}/api/analyze-issue`, {
-                scan_id: this.currentScanId,
-                issue_index: issueIndex,
-                code_snippet: codeSnippet,
-                user_id: 'vscode_user'
-            });
+            this.outputChannel.appendLine('🚀 scanCodeInternal START');
+            const headers = await this.getAuthHeaders();
+            const response = await axios_1.default.post(`${this.apiUrl}/api/scan`, { code, language, filename }, { headers, timeout: 60000 });
+            this.currentScanId = response.data.scan_id;
+            this.outputChannel.appendLine('✅ scan SUCCESS');
             return response.data;
         }
         catch (error) {
-            throw new Error(`AI analysis failed: ${error.message}`);
+            this.outputChannel.appendLine('❌ scan ERROR: ' + error.message);
+            vscode.window.showErrorMessage('SASTify scan error: ' + error.message);
+            return { success: false, error: error.message };
         }
     }
-    async reportFalsePositive(issueIndex, comment) {
-        if (!this.currentScanId) {
-            throw new Error('No active scan');
+    // ─────────────────────────────────────────────────────────────────────────
+    // RESULTS
+    // ─────────────────────────────────────────────────────────────────────────
+    showResults(results) {
+        vscode.commands.executeCommand('sastify.highlightIssues', results.issues);
+        resultsPanel_1.ResultsPanel.createOrShow(vscode.Uri.joinPath(this.extensionUri, 'media'), results, this);
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+    // AI ANALYSIS — protected against duplicate concurrent calls
+    // ─────────────────────────────────────────────────────────────────────────
+    async analyzeIssueWithAI(issueIndex, codeSnippet) {
+        // Guard: if a request for this issue is already in-flight, ignore
+        if (this._aiInFlight.has(issueIndex)) {
+            this.outputChannel.appendLine(`⏳ AI request for issue #${issueIndex} already in-flight — skipping.`);
+            throw new Error('AI analysis already in progress for this issue. Please wait.');
         }
+        this._aiInFlight.add(issueIndex);
+        this.outputChannel.appendLine(`🤖 AI analysis START — issue #${issueIndex}`);
         try {
-            await axios_1.default.post(`${this.apiUrl}/api/report-false-positive`, {
+            const headers = await this.getAuthHeaders();
+            const response = await axios_1.default.post(`${this.apiUrl}/api/analyze-issue`, {
                 scan_id: this.currentScanId,
                 issue_index: issueIndex,
-                comment: comment,
-                user_id: 'vscode_user'
-            });
-            vscode.window.showInformationMessage('False positive reported successfully');
+                code_snippet: codeSnippet
+            }, { headers, timeout: AI_TIMEOUT_MS });
+            this.outputChannel.appendLine(`✅ AI analysis DONE — issue #${issueIndex}`);
+            return response.data;
         }
         catch (error) {
-            vscode.window.showErrorMessage(`Failed to report false positive: ${error.message}`);
+            const isTimeout = error.code === 'ECONNABORTED' || error.message?.includes('timeout');
+            const msg = isTimeout
+                ? 'AI analysis timed out. The model may be busy — please try again shortly.'
+                : error.message;
+            this.outputChannel.appendLine(`❌ AI analysis ERROR — issue #${issueIndex}: ${msg}`);
+            throw new Error(msg);
+        }
+        finally {
+            // Always clear the in-flight flag so the user can retry
+            this._aiInFlight.delete(issueIndex);
         }
     }
+    // ─────────────────────────────────────────────────────────────────────────
+    // FALSE POSITIVE
+    // ─────────────────────────────────────────────────────────────────────────
+    async reportFalsePositive(issueIndex, comment) {
+        try {
+            const headers = await this.getAuthHeaders();
+            await axios_1.default.post(`${this.apiUrl}/api/report-false-positive`, { scan_id: this.currentScanId, issue_index: issueIndex, comment }, { headers, timeout: 15000 });
+            vscode.window.showInformationMessage('SASTify: False positive reported — thank you!');
+        }
+        catch (error) {
+            this.outputChannel.appendLine('❌ reportFalsePositive error: ' + error.message);
+            vscode.window.showErrorMessage('SASTify: Could not report false positive: ' + error.message);
+        }
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+    // UTILITIES
+    // ─────────────────────────────────────────────────────────────────────────
     mapLanguageId(languageId) {
-        const languageMap = {
-            'javascript': 'javascript',
-            'typescript': 'javascript',
-            'python': 'python',
-            'py': 'python'
+        const map = {
+            javascript: 'javascript',
+            typescript: 'javascript',
+            python: 'python',
+            java: 'java',
+            kotlin: 'kotlin',
+            swift: 'swift',
+            dart: 'dart',
+            php: 'php'
         };
-        return languageMap[languageId] || null;
+        return map[languageId] ?? null;
     }
 }
 exports.SASTifyProvider = SASTifyProvider;

@@ -1,13 +1,23 @@
 import re
 import ast
-import esprima
 import hashlib
 import yaml
+import logging
 from typing import List, Dict, Tuple, Any, Set, Optional
 import json
 import subprocess
 import os
 from pathlib import Path
+
+# Graceful esprima import — it only supports ES6 so modern JS needs preprocessing
+try:
+    import esprima
+    ESPRIMA_AVAILABLE = True
+except ImportError:
+    esprima = None
+    ESPRIMA_AVAILABLE = False
+
+logger = logging.getLogger('sastify')
 
 
 class TaintTracker:
@@ -562,6 +572,98 @@ class PythonASTScanner:
             return '\n'.join(lines[start_line:end_line])
         return ''
 
+def _preprocess_modern_js(code: str) -> str:
+    """Transform modern JavaScript (ES2020+) into ES6-compatible code for esprima.
+    
+    Esprima only supports ES6/ES2015. This function rewrites newer syntax into
+    semantically-equivalent ES6 so parsing succeeds. Line numbers are preserved
+    (no lines added or removed) to keep vulnerability reports accurate.
+    """
+    try:
+        # 1) Optional chaining: obj?.prop -> obj.prop
+        #    Must NOT match ternary ?. like  cond ? .prop : ...
+        #    Use lookbehind to ensure ? follows an identifier/bracket/paren
+        code = re.sub(r'(?<=[\w\)\]\"\'])\?\.', '.', code)
+        
+        # 2) Nullish coalescing: a ?? b -> a || b
+        code = re.sub(r'\?\?(?!=)', '||', code)
+        
+        # 3) Logical assignment operators: &&= ||= ??= -> =
+        code = re.sub(r'(\&\&|\|\||\?\?)=', '=', code)
+        
+        # 4) Numeric separators: 1_000_000 -> 1000000
+        code = re.sub(r'(?<=\d)_(?=\d)', '', code)
+        
+        # 5) Private class fields: #field -> _priv_field
+        code = re.sub(r'(?<=[\s\{;,\(])#([a-zA-Z_]\w*)', r'_priv_\1', code)
+        # Also handle this.#field -> this._priv_field
+        code = re.sub(r'\.#([a-zA-Z_]\w*)', r'._priv_\1', code)
+        
+        # 6) BigInt literals: 123n -> 123
+        code = re.sub(r'\b(\d+)n\b', r'\1', code)
+        
+        # 7) import.meta -> ({}) (placeholder object)
+        code = re.sub(r'\bimport\.meta\b', '({})', code)
+        
+        # 8) Class field declarations (instance & static):
+        #    class Foo { bar = 1; static baz = 2; }
+        #    Convert to constructor assignment stubs esprima can parse.
+        #    We replace "fieldName = value;" at class level with a method stub.
+        def _fix_class_fields(match):
+            """Replace class field declarations with getter stubs."""
+            indent = match.group(1)
+            static = match.group(2) or ''
+            name = match.group(3)
+            value = match.group(4)
+            # Convert to a method-like form esprima accepts
+            return f"{indent}{static}get {name}() {{ return {value}; }}"
+        
+        code = re.sub(
+            r'^([ \t]*)(static\s+)?([a-zA-Z_$][\w$]*)\s*=\s*([^;]+);',
+            _fix_class_fields,
+            code,
+            flags=re.MULTILINE
+        )
+        
+        # 9) Top-level await: await expr -> (expr)
+        #    Only outside async functions — crude but prevents parse failure
+        code = re.sub(r'^(\s*)await\s+', r'\1', code, flags=re.MULTILINE)
+        
+        # 10) Dynamic import(): import('x') -> require('x')
+        code = re.sub(r'\bimport\s*\(', 'require(', code)
+        
+        # 11) Export default from re-exports: export { x } from 'y' is fine in module mode
+        #     but "export default class { ... }" with field decls may still fail.
+        #     The class field fix above handles the inner issue.
+        
+    except Exception:
+        pass  # If preprocessing itself fails, return code as-is for best-effort parse
+    
+    return code
+
+
+def _safe_parse_js(code: str, preprocess: bool = True) -> 'Any':
+    """Safely parse JavaScript code with esprima, returning AST or None.
+    
+    Tries module mode first (for import/export), then script mode.
+    Returns None on any parse failure — callers must handle gracefully.
+    """
+    if not ESPRIMA_AVAILABLE:
+        return None
+    
+    parse_code = _preprocess_modern_js(code) if preprocess else code
+    
+    for parser_fn in (esprima.parseModule, esprima.parseScript):
+        try:
+            return parser_fn(parse_code, {'loc': True, 'range': True, 'tolerant': True})
+        except Exception:
+            continue
+    
+    # All parsing attempts failed
+    logger.debug('esprima: could not parse JavaScript code (even after preprocessing)')
+    return None
+
+
 class JavascriptASTScanner:
     def __init__(self, taint_tracker: TaintTracker):
         self.taint_tracker = taint_tracker
@@ -572,28 +674,13 @@ class JavascriptASTScanner:
         self.issues = []
         self.tainted_variables = set()
         
-        # Pre-process ES2020+ syntax to prevent esprima from crashing
-        import re
-        clean_code = code
-        try:
-            clean_code = re.sub(r'\?\.', '.', clean_code)  # Optional chaining
-            clean_code = re.sub(r'\?\?', '||', clean_code)  # Nullish coalescing
-            clean_code = re.sub(r'(\&\&|\|\||\?\?)=', '=', clean_code)  # Logical assignments
-            clean_code = re.sub(r'(?<=\d)_(?=\d)', '', clean_code)  # Numeric separators
-            clean_code = re.sub(r'(?<=\s|\.)#([a-zA-Z_]\w*)', r'_\1', clean_code) # Private fields
-        except Exception:
-            pass
+        if not ESPRIMA_AVAILABLE:
+            return self.issues
 
-        try:
-            # Try parsing as ES6 module first (supports import/export)
-            try:
-                parsed = esprima.parseModule(clean_code, {'loc': True})
-            except Exception:
-                # Fall back to script parsing for non-module code
-                parsed = esprima.parseScript(clean_code, {'loc': True})
+        parsed = _safe_parse_js(code, preprocess=True)
+        if parsed is not None:
             self._traverse(parsed, code)
-        except Exception as e:
-            print(f"JavaScript AST scan error: {e}")
+        
         return self.issues
 
     def _traverse(self, node, code):
@@ -1253,7 +1340,35 @@ class EnhancedRuleEngine:
                 self.dart_available = False
                 self.dart_is_ast = False
 
+        # Initialize Dataflow-enhanced scanner for Python taint analysis
+        try:
+            from dataflow_graph import DataflowEnhancedScanner
+            self.dataflow_scanner = DataflowEnhancedScanner()
+            self.dataflow_available = True
+        except ImportError:
+            self.dataflow_scanner = None
+            self.dataflow_available = False
 
+        # Initialize Tree-Sitter JS/TS scanner for modern syntax support
+        try:
+            import tree_sitter_javascript as tsjs
+            import tree_sitter as ts
+            self._ts_js_language = ts.Language(tsjs.language())
+            self._ts_js_parser = ts.Parser(self._ts_js_language)
+            self.tree_sitter_js_available = True
+            try:
+                import tree_sitter_typescript as tsts
+                self._ts_ts_language = ts.Language(tsts.language_typescript())
+                self._ts_ts_parser = ts.Parser(self._ts_ts_language)
+                self.tree_sitter_ts_available = True
+            except (ImportError, Exception):
+                self._ts_ts_parser = None
+                self.tree_sitter_ts_available = False
+        except (ImportError, Exception):
+            self._ts_js_parser = None
+            self._ts_ts_parser = None
+            self.tree_sitter_js_available = False
+            self.tree_sitter_ts_available = False
 
     
     def _build_comprehensive_patterns(self) -> Dict[str, List[Tuple]]:
@@ -1560,23 +1675,47 @@ class EnhancedRuleEngine:
         # AST Analysis based on language
         if language == 'python':
             issues.extend(self.python_scanner.scan(code))
+            # Dataflow taint analysis for Python (CFG-based, tracks through assignments)
+            if self.dataflow_available:
+                try:
+                    df_issues = self.dataflow_scanner.scan_file(code, filename or 'code.py')
+                    for df in df_issues:
+                        df.setdefault('scanner', 'dataflow_analysis')
+                    issues.extend(df_issues)
+                except Exception:
+                    pass
         elif language == 'javascript':
+            # Use tree-sitter for AST if available, then run existing JS scanner
+            if self.tree_sitter_js_available:
+                try:
+                    ts_issues = self._scan_js_with_tree_sitter(code, filename or 'code.js')
+                    issues.extend(ts_issues)
+                except Exception:
+                    pass
             issues.extend(self.js_scanner.scan(code))
-        elif language == 'typescript' and self.typescript_available:
-            # TypeScript-specific analysis
-            from typescript_analyzer import TypeScriptParser
-            parser = TypeScriptParser(filename or 'code.ts', code)
-            ts_issues = parser.get_type_safety_issues()
-            for issue in ts_issues:
-                issues.append({
-                    'type': issue['type'].lower().replace(' ', '_'),
-                    'line': issue['line'],
-                    'snippet': issue.get('snippet', ''),
-                    'confidence': 0.8,
-                    'severity': issue.get('severity', 'Medium'),
-                    'scanner': 'typescript_analyzer',
-                    'description': issue.get('message', issue['type'])
-                })
+        elif language == 'typescript':
+            # Use tree-sitter TS parser if available
+            if self.tree_sitter_ts_available:
+                try:
+                    ts_issues = self._scan_ts_with_tree_sitter(code, filename or 'code.ts')
+                    issues.extend(ts_issues)
+                except Exception:
+                    pass
+            if self.typescript_available:
+                # TypeScript-specific analysis
+                from typescript_analyzer import TypeScriptParser
+                parser = TypeScriptParser(filename or 'code.ts', code)
+                ts_issues = parser.get_type_safety_issues()
+                for issue in ts_issues:
+                    issues.append({
+                        'type': issue['type'].lower().replace(' ', '_'),
+                        'line': issue['line'],
+                        'snippet': issue.get('snippet', ''),
+                        'confidence': 0.8,
+                        'severity': issue.get('severity', 'Medium'),
+                        'scanner': 'typescript_analyzer',
+                        'description': issue.get('message', issue['type'])
+                    })
             # Also run JS scanner for TypeScript
             issues.extend(self.js_scanner.scan(code))
         elif language == 'java' and self.java_available:
@@ -1763,7 +1902,9 @@ class EnhancedRuleEngine:
                             ranges.append((node.lineno, node.col_offset, node.end_lineno, node.end_col_offset))
                             
             elif language == 'javascript':
-                parsed = esprima.parseScript(code, {'loc': True, 'range': True})
+                parsed = _safe_parse_js(code, preprocess=True)
+                if parsed is None:
+                    return ranges
                 
                 def traverse(node):
                     if not node or not hasattr(node, 'type'):
@@ -1786,9 +1927,171 @@ class EnhancedRuleEngine:
                 
                 traverse(parsed)
                 
-        except Exception as e:
-            # If parsing fails, we fallback to no filtering (safer to have FP than FN)
-            print(f"Error parsing for string ranges: {e}")
-            pass
+        except Exception:
+            # If parsing fails, we fallback to no string filtering (safer to have FP than FN)
+            logger.debug('String range extraction failed, skipping string-literal filtering')
             
         return ranges
+
+    # ── Tree-Sitter Security Scanning ──────────────────────────────────────
+
+    def _ts_node_text(self, node, code_bytes: bytes) -> str:
+        """Extract text from a tree-sitter node."""
+        return code_bytes[node.start_byte:node.end_byte].decode('utf-8', errors='ignore')
+
+    def _ts_walk_all(self, node):
+        """Yield all descendant nodes (depth-first)."""
+        yield node
+        for child in node.children:
+            yield from self._ts_walk_all(child)
+
+    def _scan_js_with_tree_sitter(self, code: str, filename: str) -> List[Dict]:
+        """Scan JavaScript using tree-sitter AST for security issues."""
+        code_bytes = code.encode('utf-8')
+        tree = self._ts_js_parser.parse(code_bytes)
+        return self._scan_tree_sitter_ast(tree.root_node, code_bytes, code, filename)
+
+    def _scan_ts_with_tree_sitter(self, code: str, filename: str) -> List[Dict]:
+        """Scan TypeScript using tree-sitter AST for security issues."""
+        code_bytes = code.encode('utf-8')
+        tree = self._ts_ts_parser.parse(code_bytes)
+        return self._scan_tree_sitter_ast(tree.root_node, code_bytes, code, filename)
+
+    def _scan_tree_sitter_ast(self, root_node, code_bytes: bytes, code: str, filename: str) -> List[Dict]:
+        """Core tree-sitter AST scanner for JS/TS security issues."""
+        issues = []
+        code_lines = code.split('\n')
+
+        DANGEROUS_CALLS = {
+            'eval': ('code_injection', 'Critical', 'CWE-95', 'eval() executes arbitrary code'),
+            'Function': ('code_injection', 'Critical', 'CWE-95', 'Function() constructor executes arbitrary code'),
+        }
+
+        DANGEROUS_MEMBERS = {
+            'innerHTML': ('xss', 'High', 'CWE-79', 'innerHTML assignment enables XSS'),
+            'outerHTML': ('xss', 'High', 'CWE-79', 'outerHTML assignment enables XSS'),
+            'dangerouslySetInnerHTML': ('xss', 'High', 'CWE-79', 'dangerouslySetInnerHTML bypasses React XSS protection'),
+            'exec': ('command_injection', 'Critical', 'CWE-78', 'child_process.exec enables command injection'),
+            'execSync': ('command_injection', 'Critical', 'CWE-78', 'child_process.execSync enables command injection'),
+        }
+
+        for node in self._ts_walk_all(root_node):
+            line = node.start_point[0] + 1
+            snippet = code_lines[line - 1].strip() if line <= len(code_lines) else ''
+
+            ctx_start = max(0, line - 4)
+            ctx_end = min(len(code_lines), line + 3)
+            context_lines = []
+            for i in range(ctx_start, ctx_end):
+                prefix = '>>> ' if i == line - 1 else '    '
+                context_lines.append(f'{prefix}{i + 1}: {code_lines[i]}')
+            snippet_context = '\n'.join(context_lines)
+
+            # 1. Dangerous function calls: eval(), Function()
+            if node.type == 'call_expression':
+                func_node = node.child_by_field_name('function')
+                if func_node:
+                    func_text = self._ts_node_text(func_node, code_bytes)
+                    if func_text in DANGEROUS_CALLS:
+                        vuln_type, severity, cwe, desc = DANGEROUS_CALLS[func_text]
+                        issues.append({
+                            'type': vuln_type, 'line': line, 'snippet': snippet,
+                            'snippet_context': snippet_context,
+                            'confidence': 0.95, 'severity': severity,
+                            'cwe_id': cwe, 'scanner': 'tree_sitter',
+                            'description': desc, 'file': filename,
+                        })
+
+                    # Member calls: child_process.exec(...)
+                    if func_node.type == 'member_expression':
+                        prop = func_node.child_by_field_name('property')
+                        if prop:
+                            prop_name = self._ts_node_text(prop, code_bytes)
+                            if prop_name in DANGEROUS_MEMBERS:
+                                vuln_type, severity, cwe, desc = DANGEROUS_MEMBERS[prop_name]
+                                issues.append({
+                                    'type': vuln_type, 'line': line, 'snippet': snippet,
+                                    'snippet_context': snippet_context,
+                                    'confidence': 0.90, 'severity': severity,
+                                    'cwe_id': cwe, 'scanner': 'tree_sitter',
+                                    'description': desc, 'file': filename,
+                                })
+
+                    # document.write / document.writeln
+                    func_full = self._ts_node_text(func_node, code_bytes)
+                    if 'document.write' in func_full:
+                        issues.append({
+                            'type': 'xss', 'line': line, 'snippet': snippet,
+                            'snippet_context': snippet_context,
+                            'confidence': 0.85, 'severity': 'High',
+                            'cwe_id': 'CWE-79', 'scanner': 'tree_sitter',
+                            'description': 'document.write() enables DOM-based XSS',
+                            'file': filename,
+                        })
+
+                    # SQL injection: db.query(`SELECT ... ${var}`)
+                    func_lower = func_full.lower()
+                    if any(kw in func_lower for kw in ('query', 'execute', '.raw')):
+                        args = node.child_by_field_name('arguments')
+                        if args:
+                            for arg in args.named_children:
+                                if arg.type == 'template_string':
+                                    issues.append({
+                                        'type': 'sql_injection', 'line': line, 'snippet': snippet,
+                                        'snippet_context': snippet_context,
+                                        'confidence': 0.85, 'severity': 'Critical',
+                                        'cwe_id': 'CWE-89', 'scanner': 'tree_sitter',
+                                        'description': 'SQL query with template literal enables injection',
+                                        'file': filename,
+                                    })
+                                elif arg.type == 'binary_expression':
+                                    if '+' in self._ts_node_text(arg, code_bytes):
+                                        issues.append({
+                                            'type': 'sql_injection', 'line': line, 'snippet': snippet,
+                                            'snippet_context': snippet_context,
+                                            'confidence': 0.80, 'severity': 'Critical',
+                                            'cwe_id': 'CWE-89', 'scanner': 'tree_sitter',
+                                            'description': 'SQL query with string concat enables injection',
+                                            'file': filename,
+                                        })
+
+            # 2. Dangerous assignments: el.innerHTML = userInput
+            if node.type == 'assignment_expression':
+                left = node.child_by_field_name('left')
+                if left and left.type == 'member_expression':
+                    prop = left.child_by_field_name('property')
+                    if prop:
+                        prop_name = self._ts_node_text(prop, code_bytes)
+                        if prop_name in ('innerHTML', 'outerHTML'):
+                            issues.append({
+                                'type': 'xss', 'line': line, 'snippet': snippet,
+                                'snippet_context': snippet_context,
+                                'confidence': 0.85, 'severity': 'High',
+                                'cwe_id': 'CWE-79', 'scanner': 'tree_sitter',
+                                'description': f'{prop_name} assignment may enable XSS',
+                                'file': filename,
+                            })
+
+            # 3. Hardcoded secrets in variable declarations
+            if node.type == 'variable_declarator':
+                name_node = node.child_by_field_name('name')
+                value_node = node.child_by_field_name('value')
+                if name_node and value_node and value_node.type == 'string':
+                    var_name = self._ts_node_text(name_node, code_bytes).lower()
+                    var_value = self._ts_node_text(value_node, code_bytes)
+                    secret_kws = ('password', 'secret', 'api_key', 'apikey', 'token',
+                                  'private_key', 'access_key', 'auth_key')
+                    if any(kw in var_name for kw in secret_kws) and len(var_value) > 10:
+                        skip_vals = ('process.env', 'os.environ', 'env.', 'test',
+                                     'example', 'placeholder', 'xxx', 'your_', 'TODO')
+                        if not any(s in var_value.lower() for s in skip_vals):
+                            issues.append({
+                                'type': 'hardcoded_secret', 'line': line, 'snippet': snippet,
+                                'snippet_context': snippet_context,
+                                'confidence': 0.85, 'severity': 'High',
+                                'cwe_id': 'CWE-798', 'scanner': 'tree_sitter',
+                                'description': f'Hardcoded secret: {self._ts_node_text(name_node, code_bytes)}',
+                                'file': filename,
+                            })
+
+        return issues

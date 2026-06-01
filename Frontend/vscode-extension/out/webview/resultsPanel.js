@@ -558,7 +558,7 @@ class ResultsPanel {
                             ${issue.description ? `<div class="issue-description">${this.escapeHtml(issue.description)}</div>` : ''}
                             
                             <div class="issue-actions">
-                                <button class="action-btn primary" onclick="analyzeWithAI(${index})">
+                                <button class="action-btn primary" data-ai-btn="${index}" onclick="analyzeWithAI(${index})">
                                     <span class="btn-icon">🤖</span> Analyze with AI
                                 </button>
                                 <button class="action-btn secondary" onclick="goToLine('${this.escapeHtml(issue.file || '')}', ${issue.line})">
@@ -587,25 +587,26 @@ class ResultsPanel {
         }
         const css = `
             :root {
-                --bg-dark: #0a0a0f;
-                --bg-card: rgba(255,255,255,0.03);
-                --bg-hover: rgba(255,255,255,0.06);
-                --border-subtle: rgba(255,255,255,0.08);
-                --border-hover: rgba(255,255,255,0.15);
-                --text-primary: #f0f0f0;
-                --text-secondary: #888;
-                --accent-primary: #6366f1;
-                --accent-secondary: #8b5cf6;
+                --bg-dark: #050609;
+                --bg-card: rgba(255,255,255,0.025);
+                --bg-hover: rgba(255,255,255,0.05);
+                --border-subtle: rgba(255,255,255,0.06);
+                --border-hover: rgba(255,255,255,0.12);
+                --text-primary: #e8e8f0;
+                --text-secondary: rgba(255,255,255,0.45);
+                --accent-primary: #818cf8;
+                --accent-secondary: #a78bfa;
                 --critical: #ef4444;
                 --high: #f97316;
                 --medium: #eab308;
                 --low: #22c55e;
                 --info: #3b82f6;
-                --radius-sm: 6px;
-                --radius-md: 12px;
-                --radius-lg: 20px;
+                --radius-sm: 8px;
+                --radius-md: 14px;
+                --radius-lg: 22px;
                 --radius-full: 9999px;
-                --shadow-glow: 0 0 40px rgba(99, 102, 241, 0.15);
+                --shadow-glow: 0 0 40px rgba(99, 102, 241, 0.12);
+                --font-display: 'Outfit', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
             }
             
             * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -613,11 +614,17 @@ class ResultsPanel {
             body {
                 font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
                 background: var(--bg-dark);
+                background-image: radial-gradient(ellipse at 20% 0%, rgba(99,102,241,0.04) 0%, transparent 50%);
                 color: var(--text-primary);
                 line-height: 1.6;
                 padding: 24px;
                 min-height: 100vh;
             }
+            
+            ::-webkit-scrollbar { width: 5px; height: 5px; }
+            ::-webkit-scrollbar-track { background: transparent; }
+            ::-webkit-scrollbar-thumb { background: rgba(99,102,241,0.2); border-radius: 10px; }
+            ::-webkit-scrollbar-thumb:hover { background: rgba(99,102,241,0.35); }
             
             .container { max-width: 1400px; margin: 0 auto; }
             
@@ -631,7 +638,20 @@ class ResultsPanel {
                 border: 1px solid var(--border-subtle);
                 border-radius: var(--radius-lg);
                 margin-bottom: 24px;
-                backdrop-filter: blur(20px);
+                backdrop-filter: blur(24px);
+                position: relative;
+                overflow: hidden;
+            }
+            
+            .header::before {
+                content: '';
+                position: absolute;
+                top: 0;
+                left: 0;
+                right: 0;
+                height: 2px;
+                background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary), transparent);
+                opacity: 0.6;
             }
             
             .brand {
@@ -653,10 +673,12 @@ class ResultsPanel {
             
             .brand-text h1 {
                 font-size: 1.5rem;
-                font-weight: 700;
-                background: linear-gradient(90deg, #fff, #a5b4fc);
+                font-weight: 800;
+                font-family: var(--font-display);
+                background: linear-gradient(135deg, #fff 30%, #a5b4fc 100%);
                 -webkit-background-clip: text;
                 -webkit-text-fill-color: transparent;
+                letter-spacing: -0.5px;
             }
             
             .brand-text p {
@@ -687,6 +709,8 @@ class ResultsPanel {
                 background: var(--bg-card);
                 border: 1px solid var(--border-subtle);
                 border-radius: var(--radius-md);
+                position: relative;
+                overflow: hidden;
                 padding: 20px;
                 text-align: center;
                 transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -700,8 +724,10 @@ class ResultsPanel {
             
             .stat-value {
                 font-size: 2rem;
-                font-weight: 700;
+                font-weight: 800;
+                font-family: var(--font-display);
                 line-height: 1;
+                letter-spacing: -1px;
             }
             
             .stat-label {
@@ -1243,19 +1269,45 @@ class ResultsPanel {
                 vscode.postMessage({ command: 'exportResults', format: format });
             }
             
-            // AI Analysis
+            // AI Analysis — guard against double-clicks / multiple triggers
+            const _aiPending = new Set();
+
             function analyzeWithAI(idx) {
                 const issue = issuesData[idx];
                 if (!issue) return;
-                
-                document.getElementById('ai-analysis-' + idx).innerHTML = 
-                    '<div class="loading"><div class="spinner"></div><span>AI analyzing vulnerability...</span></div>';
-                
-                vscode.postMessage({ 
-                    command: 'analyzeWithAI', 
-                    issueIndex: idx, 
-                    codeSnippet: issue.snippet 
+
+                // Prevent firing again while already waiting
+                if (_aiPending.has(idx)) {
+                    showToast('⏳ AI analysis already running for this issue…');
+                    return;
+                }
+
+                _aiPending.add(idx);
+
+                // Disable the button and show spinner in the result area
+                const btn = document.querySelector('[data-ai-btn="' + idx + '"]');
+                if (btn) {
+                    btn.disabled = true;
+                    btn.textContent = '⏳ Analysing…';
+                }
+
+                document.getElementById('ai-analysis-' + idx).innerHTML =
+                    '<div class="loading"><div class="spinner"></div><span>AI analysing vulnerability…</span></div>';
+
+                vscode.postMessage({
+                    command: 'analyzeWithAI',
+                    issueIndex: idx,
+                    codeSnippet: issue.snippet
                 });
+            }
+
+            function _aiDone(idx) {
+                _aiPending.delete(idx);
+                const btn = document.querySelector('[data-ai-btn="' + idx + '"]');
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = '<span class="btn-icon">🤖</span> Analyze with AI';
+                }
             }
             
             // Report FP
@@ -1300,19 +1352,20 @@ class ResultsPanel {
             // Message handler
             window.addEventListener('message', function(event) {
                 const msg = event.data;
-                
+
                 if (msg.command === 'aiAnalysisResult') {
                     const a = msg.analysis;
                     const container = document.getElementById('ai-analysis-' + msg.issueIndex);
-                    
+                    _aiDone(msg.issueIndex); // re-enable button
+
                     if (a.error) {
                         container.innerHTML = '<div class="ai-analysis" style="border-color: var(--critical);"><p style="color: var(--critical);">Error: ' + a.error + '</p></div>';
                         return;
                     }
-                    
+
                     const conf = ((a.confidence || 0) * 100).toFixed(0);
                     let html;
-                    
+
                     if (!a.is_confirmed) {
                         html = '<div class="fp-box">';
                         html += '<div class="ai-header ai-fp">✓ Likely False Positive</div>';
@@ -1328,19 +1381,27 @@ class ResultsPanel {
                         html += '<p><strong>Confidence:</strong> ' + conf + '%</p>';
                         html += '<p><strong>Risk Level:</strong> ' + (a.risk_level || 'Unknown') + '</p>';
                         html += '<p>' + (a.explanation || '') + '</p>';
-                        
+
                         if (a.suggested_fix) {
                             html += '<div class="ai-fix"><strong>Suggested Fix:</strong><pre>' + a.suggested_fix + '</pre></div>';
                             html += '<button class="action-btn primary" onclick="applyFix(decodeURIComponent(\\'' + encodeURIComponent(a.suggested_fix) + '\\'), decodeURIComponent(\\'' + encodeURIComponent(a.explanation || '') + '\\'), ' + msg.issueIndex + ')">Apply Fix</button>';
                         }
-                        
+
                         html += '</div></div>';
                     }
-                    
+
                     container.innerHTML = html;
+
                 } else if (msg.command === 'aiAnalysisError') {
-                    document.getElementById('ai-analysis-' + msg.issueIndex).innerHTML = 
-                        '<div class="ai-analysis" style="border-color: var(--critical);"><p style="color: var(--critical);">Error: ' + msg.error + '</p></div>';
+                    const errMsg = msg.error || 'Unknown error';
+                    const container = document.getElementById('ai-analysis-' + msg.issueIndex);
+                    _aiDone(msg.issueIndex); // re-enable button so user can retry
+                    const retryBtn = '<button class="action-btn primary" style="margin-top:10px" onclick="analyzeWithAI(' + msg.issueIndex + ')">🔄 Retry AI Analysis</button>';
+                    container.innerHTML =
+                        '<div class="ai-analysis" style="border-color: var(--critical);">' +
+                        '<p style="color: var(--critical);">⚠ AI Error: ' + errMsg + '</p>' +
+                        retryBtn + '</div>';
+
                 } else if (msg.command === 'falsePositiveReported') {
                     showToast('False positive reported. Thanks!');
                 } else if (msg.command === 'fixApplied') {
@@ -1354,7 +1415,7 @@ class ResultsPanel {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SASTify Security Results</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>${css}</style>
 </head>
 <body>
@@ -1362,16 +1423,20 @@ class ResultsPanel {
         <!-- Header -->
         <div class="header">
             <div class="brand">
-                <div class="brand-icon">🔒</div>
+                <div class="brand-icon">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                        <path d="M12 2L4 6v6c0 5.55 3.84 10.74 8 12 4.16-1.26 8-6.45 8-12V6L12 2z" fill="white" fill-opacity="0.9"/>
+                    </svg>
+                </div>
                 <div class="brand-text">
                     <h1>SASTify</h1>
                     <p>AI-Powered Security Analysis</p>
                 </div>
             </div>
             <div class="header-actions">
-                <button class="btn btn-secondary" onclick="exportResults('json')">📄 Export JSON</button>
-                <button class="btn btn-secondary" onclick="exportResults('sarif')">📊 Export SARIF</button>
-                <button class="btn btn-primary" onclick="exportResults('html')">📑 Export Report</button>
+                <button class="btn btn-secondary" onclick="exportResults('json')">Export JSON</button>
+                <button class="btn btn-secondary" onclick="exportResults('sarif')">Export SARIF</button>
+                <button class="btn btn-primary" onclick="exportResults('html')">Export Report</button>
             </div>
         </div>
         

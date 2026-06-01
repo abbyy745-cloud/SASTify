@@ -10,7 +10,7 @@ Outputs scan results in SARIF 2.1.0 format for integration with:
 
 import json
 import hashlib
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
 
@@ -199,7 +199,7 @@ class SarifFormatter:
         ),
     }
     
-    def __init__(self, tool_name: str = "SASTify", tool_version: str = "1.0.0"):
+    def __init__(self, tool_name: str = "SASTify", tool_version: str = "2.0.0"):
         self.tool_name = tool_name
         self.tool_version = tool_version
     
@@ -231,7 +231,7 @@ class SarifFormatter:
                 "results": self._build_results(vulnerabilities, filename),
                 "invocations": [{
                     "executionSuccessful": True,
-                    "endTimeUtc": datetime.utcnow().isoformat() + "Z"
+                    "endTimeUtc": datetime.now(timezone.utc).isoformat() + "Z"
                 }]
             }]
         }
@@ -287,7 +287,7 @@ class SarifFormatter:
             "driver": {
                 "name": self.tool_name,
                 "version": self.tool_version,
-                "informationUri": "https://github.com/yourusername/sastify",
+                "informationUri": "https://github.com/SASTify/sastify",
                 "rules": rules,
                 "supportedTaxonomies": [{
                     "name": "CWE",
@@ -417,7 +417,7 @@ class SarifFormatter:
     
     def _generate_fingerprint(self, vuln: Dict) -> str:
         """Generate a stable fingerprint for a vulnerability"""
-        fp_data = f"{vuln.get('type', '')}-{vuln.get('line', 0)}-{vuln.get('snippet', '')[:100]}"
+        fp_data = f"{vuln.get('file', '')}-{vuln.get('type', '')}-{vuln.get('line', 0)}-{vuln.get('snippet', '')[:100]}"
         return hashlib.sha256(fp_data.encode()).hexdigest()[:32]
     
     def _cwe_to_guid(self, cwe_id: str) -> str:

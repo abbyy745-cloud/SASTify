@@ -1,7 +1,10 @@
 import hashlib
 import json
+import logging
 from typing import Dict, List, Any, Optional
 from datetime import datetime
+
+logger = logging.getLogger('sastify')
 
 class FalsePositiveDetector:
     def __init__(self):
@@ -16,12 +19,12 @@ class FalsePositiveDetector:
             'pattern': issue.get('pattern', ''),
             'context_hash': self._get_context_hash(issue)
         }
-        return hashlib.md5(json.dumps(fingerprint_data, sort_keys=True).encode()).hexdigest()
+        return hashlib.sha256(json.dumps(fingerprint_data, sort_keys=True).encode()).hexdigest()[:32]
     
     def _get_context_hash(self, issue: Dict) -> str:
         """Create hash of code context around the issue"""
         context = issue.get('context', '')[:100]  # First 100 chars of context
-        return hashlib.md5(context.encode()).hexdigest()
+        return hashlib.sha256(context.encode()).hexdigest()[:16]
     
     def is_likely_false_positive(self, issue: Dict, historical_data: Dict, filename: Optional[str] = None) -> bool:
         """Determine if an issue is likely a false positive"""
@@ -35,14 +38,14 @@ class FalsePositiveDetector:
         if filename and self._is_test_file(filename):
             # In test files, we are more lenient with secrets and randomness
             issue_type = issue.get('type', '')
-            if issue_type in ['hardcoded_secret', 'insecure_randomness', 'weak_cryptography', 'information_exposure', 'path_traversal']:
+            if issue_type in ['hardcoded_secret', 'insecure_randomness', 'weak_cryptography', 'information_exposure']:
                 return True
         
         # Apply heuristic rules
         confidence_score = issue.get('confidence', 0)
         
-        # Low confidence issues are more likely to be FPs
-        if confidence_score < 0.5:
+        # Very low confidence issues are more likely to be FPs
+        if confidence_score < 0.3:
             return True
         
         # Certain patterns are commonly false positives
@@ -51,7 +54,7 @@ class FalsePositiveDetector:
         
         # Check user's historical feedback
         user_fp_rate = historical_data.get('false_positive_rate', 0)
-        if user_fp_rate > 0.7:  # User frequently marks similar issues as FP
+        if user_fp_rate > 0.95:  # Only suppress if user marks nearly ALL findings as FP
             return True
         
         return False
@@ -99,7 +102,7 @@ class FalsePositiveDetector:
         self.feedback_history.append(feedback)
         self.false_positive_db[fingerprint] = feedback
         
-        print(f"Recorded feedback for {fingerprint}: FP={is_false_positive}")
+        logger.debug(f"Recorded feedback for {fingerprint}: FP={is_false_positive}")
     
     def get_false_positive_stats(self) -> Dict:
         """Get statistics about false positives"""

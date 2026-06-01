@@ -7,25 +7,25 @@ const app = express();
 app.get('/users', (req, res) => {
     const userInput = req.query.name;
 
-    // Vulnerability: SQL Injection
+
     const query = `SELECT * FROM users WHERE name = '${userInput}'`;
     db.execute(query);
 });
 
 function unsafeDOM(userContent) {
-    // Vulnerability: Cross-Site Scripting (XSS)
-    document.getElementById('app').innerHTML = userContent;
+
+    document.getElementById('app').textContent = userContent;
 }
 
 app.post('/fetch', (req, res) => {
     const targetUrl = req.body.url;
 
-    // Vulnerability: SSRF
+
     axios.get(targetUrl);
 });
 
 function secrets() {
-    // Vulnerability: Hardcoded Secret
+
     const awsSecret = "AKIAIOSFODNN7EXAMPLE";
 }
 

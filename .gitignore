@@ -54,3 +54,8 @@ Backend/parsers/node_modules/
 # Cache
 .pytest_cache/
 .mypy_cache/
+
+# node_modules
+.venv
+.env
+dist

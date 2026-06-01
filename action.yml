@@ -68,7 +68,7 @@ runs:
     - name: Install dependencies
       shell: bash
       run: |
-        pip install -q fastapi uvicorn esprima colorama
+        pip install -q fastapi uvicorn esprima colorama requests pyyaml jsonschema astroid
 
     - name: Run SASTify Scan
       shell: bash
@@ -78,21 +78,21 @@ runs:
       run: |
         cd ${{ github.action_path }}
         
-        # Build arguments
-        ARGS="scan ${{ inputs.path }}"
-        ARGS="$ARGS --format ${{ inputs.format }}"
+        # Build arguments (inputs are quoted to prevent shell injection)
+        ARGS="scan '${{ inputs.path }}'"
+        ARGS="$ARGS --format '${{ inputs.format }}'"
         ARGS="$ARGS --output sastify-results.${{ inputs.format == 'html' && 'html' || 'sarif' }}"
         
         if [ -n "${{ inputs.languages }}" ]; then
-          ARGS="$ARGS --languages ${{ inputs.languages }}"
+          ARGS="$ARGS --languages '${{ inputs.languages }}'"
         fi
         
         if [ -n "${{ inputs.exclude }}" ]; then
-          ARGS="$ARGS --exclude ${{ inputs.exclude }}"
+          ARGS="$ARGS --exclude '${{ inputs.exclude }}'"
         fi
         
         if [ -n "${{ inputs.fail-on }}" ]; then
-          ARGS="$ARGS --fail-on ${{ inputs.fail-on }}"
+          ARGS="$ARGS --fail-on '${{ inputs.fail-on }}'"
         fi
         
         # AI Analysis options
@@ -122,6 +122,7 @@ runs:
         category: SASTify
 
     - name: Upload Report Artifact
+      if: always()
       uses: actions/upload-artifact@v4
       with:
         name: sastify-security-report

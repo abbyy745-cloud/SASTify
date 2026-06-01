@@ -9,8 +9,11 @@ class SecureDeepSeekAPI:
     def __init__(self, api_key: str):
         self.api_key = api_key
         self.base_url = "https://api.deepseek.com/chat/completions"
-        self.rate_limit_delay = 0.1  # 100ms between requests
+        # DeepSeek free tier allows ~3 RPM — enforce at least 20 s between calls
+        # to stay well under the limit and avoid 429s.
+        self.rate_limit_delay = 20.0
         self.last_request_time = 0
+        self._lock = None  # will be created on first use (thread-safety)
         
     def analyze_vulnerability(self, code_snippet: str, language: str, vulnerability_type: str, context: Dict, ai_mode: str = 'fast') -> Dict:
         """Analyze a specific vulnerability and provide fix suggestions"""
@@ -22,10 +25,10 @@ class SecureDeepSeekAPI:
         
         if ai_mode == 'fast':
             prompt = self._build_fast_prompt(code_snippet, language, vulnerability_type, context)
-            max_tokens = 600
+            max_tokens = 2000
         else:
             prompt = self._build_secure_prompt(code_snippet, language, vulnerability_type, context)
-            max_tokens = 1200
+            max_tokens = 4000
         
         headers = {
             "Content-Type": "application/json",
@@ -33,30 +36,48 @@ class SecureDeepSeekAPI:
         }
         
         data = {
-            "model": "deepseek-coder",
+            "model": "deepseek-chat",
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.1,
             "max_tokens": max_tokens,
             "stream": False
         }
         
-        # Retry logic with exponential backoff
-        max_retries = 3
-        base_delay = 2  # seconds
-        
+        # Retry logic with exponential backoff — handles 429, timeouts, and
+        # transient network errors gracefully.
+        max_retries = 4
+        base_delay = 5  # seconds — initial backoff
+
         for attempt in range(max_retries):
             try:
                 response = requests.post(
-                    self.base_url, 
-                    headers=headers, 
-                    json=data, 
+                    self.base_url,
+                    headers=headers,
+                    json=data,
                     timeout=45
                 )
+
+                # ── Handle rate-limit explicitly before raise_for_status ────────
+                if response.status_code == 429:
+                    retry_after = int(response.headers.get('Retry-After', base_delay * (2 ** attempt)))
+                    wait_time = max(retry_after, base_delay * (2 ** attempt))
+                    if attempt < max_retries - 1:
+                        print(f"DeepSeek 429 rate-limited (attempt {attempt + 1}/{max_retries}). "
+                              f"Waiting {wait_time}s before retry…")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        print(f"DeepSeek 429 rate-limit — exhausted {max_retries} retries.")
+                        return self._error_response(
+                            'DeepSeek API rate limit reached (429). '
+                            'Please wait a moment and try again.'
+                        )
+
                 response.raise_for_status()
-                
+
                 result = response.json()
                 self.last_request_time = time.time()
-                
+
                 # Extract and sanitize the response
                 try:
                     if 'choices' in result and len(result['choices']) > 0:
@@ -68,48 +89,54 @@ class SecureDeepSeekAPI:
                 except (KeyError, IndexError, TypeError) as e:
                     print(f"Error parsing API response: {e}")
                     return self._error_response('Failed to parse AI response')
-                
-            except requests.exceptions.Timeout as e:
+
+            except requests.exceptions.Timeout:
                 wait_time = base_delay * (2 ** attempt)
                 if attempt < max_retries - 1:
-                    print(f"DeepSeek API timeout (attempt {attempt + 1}/{max_retries}), retrying in {wait_time}s...")
+                    print(f"DeepSeek timeout (attempt {attempt + 1}/{max_retries}), retrying in {wait_time}s…")
                     time.sleep(wait_time)
                 else:
-                    print(f"DeepSeek API timeout after {max_retries} attempts: {e}")
-                    return self._error_response('API request timed out')
-                    
+                    print(f"DeepSeek timeout after {max_retries} attempts.")
+                    return self._error_response('AI request timed out — the model may be busy. Try again shortly.')
+
             except requests.exceptions.RequestException as e:
+                status = getattr(e.response, 'status_code', None) if hasattr(e, 'response') else None
+                if status == 429:
+                    # Caught via raise_for_status path
+                    wait_time = base_delay * (2 ** attempt)
+                    if attempt < max_retries - 1:
+                        print(f"DeepSeek 429 (via exception), waiting {wait_time}s…")
+                        time.sleep(wait_time)
+                        continue
+                    return self._error_response('DeepSeek API rate limit reached (429). Please try again shortly.')
                 print(f"DeepSeek API error: {e}")
-                return self._error_response('API request failed')
-        
-        return self._error_response('Unknown error')
+                return self._error_response(f'API request failed: {str(e)}')
+
+        return self._error_response('Unknown error after retries')
     
-    def analyze_vulnerabilities_batch(self, vuln_items: List[Dict], ai_mode: str = 'fast', max_workers: int = 5, verbose: bool = False) -> List[Dict]:
-        """Analyze multiple vulnerabilities concurrently using ThreadPoolExecutor.
-        
+    def analyze_vulnerabilities_batch(self, vuln_items: List[Dict], ai_mode: str = 'fast', max_workers: int = 1, verbose: bool = False) -> List[Dict]:
+        """Analyze multiple vulnerabilities SEQUENTIALLY to avoid rate-limit (429) errors.
+
+        max_workers is kept at 1 by default — concurrent requests to DeepSeek's
+        free-tier API reliably trigger 429s. The rate_limit_delay between calls
+        is enforced by analyze_vulnerability() itself.
+
         Each item in vuln_items should have: code_snippet, language, vulnerability_type, context
         Returns list of AI result dicts in the same order.
         """
         results = [None] * len(vuln_items)
-        
-        def _analyze_one(index_and_item):
-            idx, item = index_and_item
+
+        for idx, item in enumerate(vuln_items):
             if verbose:
-                import os
                 print(f"  [{idx+1}/{len(vuln_items)}] Analyzing: {item.get('vulnerability_type', 'unknown')}")
-            return idx, self.analyze_vulnerability(
+            results[idx] = self.analyze_vulnerability(
                 item['code_snippet'],
                 item['language'],
                 item['vulnerability_type'],
                 item.get('context', {}),
                 ai_mode=ai_mode
             )
-        
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = executor.map(_analyze_one, enumerate(vuln_items))
-            for idx, result in futures:
-                results[idx] = result
-        
+
         return results
     
     @staticmethod
@@ -123,53 +150,60 @@ class SecureDeepSeekAPI:
         }
     
     def _build_fast_prompt(self, code_snippet: str, language: str, vulnerability_type: str, context: Dict) -> str:
-        """Build a concise prompt for fast AI analysis but with FULL JSON structure"""
+        """Build a concise prompt for fast AI analysis."""
         sanitized_code = self._sanitize_code(code_snippet)
-        
-        return f"""Analyze this {language} code for a potential {vulnerability_type} vulnerability.
 
-Code:
+        # Only embed fields that are truly scanner-agnostic.
+        # Do NOT embed scanner descriptions, rule names, or edtech-specific
+        # labels — they cause the AI to hallucinate domain-specific reasoning
+        # unrelated to the actual code.
+        severity  = context.get('severity', 'Unknown')
+        line      = context.get('line', 'Unknown')
+        filename  = context.get('filename', '')
+        file_hint = f" (in file: {filename})" if filename else ""
+
+        return f"""You are a security researcher performing code review. Analyse the following {language} code snippet for a potential **{vulnerability_type}** vulnerability.
+
+Your analysis MUST be based SOLELY on the code below. Do NOT assume any application domain (e.g. education, finance, healthcare) unless it is explicitly visible in the code. Do NOT reference information that is not present in the snippet.
+
+Code snippet{file_hint} — line {line} (severity flagged as: {severity}):
 ```{language}
 {sanitized_code}
 ```
 
-Context: Confidence={context.get('confidence', 'Unknown')}, Severity={context.get('severity', 'Unknown')}, Line={context.get('line', 'Unknown')}
-
-You must return a STRICT JSON object with the following structure. Keep textual explanations CONCISE (1-3 sentences) to save tokens, but provide ALL fields.
+Return a STRICT JSON object with ALL of the following fields:
 
 {{
     "is_confirmed_vulnerability": true/false,
     "confidence": 0.0-1.0,
     "risk_level": "Low/Medium/High/Critical",
-    "vulnerability_summary": "One-line summary",
-    "detailed_explanation": "Concise explanation of the vulnerability and root cause (2-3 sentences max).",
+    "vulnerability_summary": "One-line summary of what is wrong in THIS code",
+    "detailed_explanation": "2–3 sentence explanation grounded in the code above",
     "attack_scenario": {{
-        "description": "Brief description of how this is exploited",
+        "description": "How an attacker would exploit THIS specific code pattern",
         "example_payloads": ["payload1"],
         "attacker_goal": "Goal"
     }},
     "impact_analysis": {{
-        "confidentiality": "High/Medium/Low - reason",
-        "integrity": "High/Medium/Low - reason",
-        "availability": "High/Medium/Low - reason",
-        "compliance": "List relevant standards"
+        "confidentiality": "High/Medium/Low — reason",
+        "integrity": "High/Medium/Low — reason",
+        "availability": "High/Medium/Low — reason",
+        "compliance": "Relevant standards if any"
     }},
-    "suggested_fix": "Corrected code snippet",
-    "remediation_steps": [
-        "Step 1", "Step 2"
-    ],
-    "false_positive_reason": "Reason if false positive",
+    "suggested_fix": "Corrected code snippet that replaces the vulnerable lines",
+    "remediation_steps": ["Step 1", "Step 2"],
+    "false_positive_reason": "If NOT a real vulnerability, explain why based on the code only",
     "suggested_test_cases": [
         {{
             "type": "unit",
-            "name": "Test Name",
+            "name": "Test name",
             "description": "What it tests",
             "code": "Test code"
         }},
         {{
             "type": "security",
-            "name": "Security Test",
-            "description": "Attack vector",
+            "name": "Security test",
+            "description": "Attack vector tested",
             "test_inputs": ["input1"],
             "expected_behavior": "Expected result"
         }}
@@ -177,111 +211,88 @@ You must return a STRICT JSON object with the following structure. Keep textual 
     "security_references": ["CWE-XXX"]
 }}
 
-Return ONLY the JSON. No markdown formatting outside the JSON."""
+Return ONLY the JSON. No markdown, no text before or after."""
 
     def _build_secure_prompt(self, code_snippet: str, language: str, vulnerability_type: str, context: Dict) -> str:
-        """Build a comprehensive prompt for detailed security analysis (full mode)"""
-        
-        # Sanitize code snippet (remove potential secrets)
+        """Build a comprehensive prompt for detailed security analysis (full mode)."""
         sanitized_code = self._sanitize_code(code_snippet)
-        
-        return f"""You are an elite security researcher and code auditor. Perform a comprehensive security analysis of this {language} code for a potential {vulnerability_type} vulnerability.
 
-CODE TO ANALYZE:
+        severity  = context.get('severity', 'Unknown')
+        line      = context.get('line', 'Unknown')
+        filename  = context.get('filename', '')
+        file_hint = f" (in file: {filename})" if filename else ""
+
+        return f"""You are an elite security researcher performing a comprehensive code audit. Analyse the following {language} code for a potential **{vulnerability_type}** vulnerability.
+
+CRITICAL RULES:
+- Base every conclusion SOLELY on the code provided below.
+- Do NOT infer application domain (e.g. education, finance) unless the code explicitly shows it.
+- Do NOT reference information that does not appear in the snippet.
+- If the vulnerability type label seems unrelated to what the code actually does, say so in false_positive_reason.
+
+Code snippet{file_hint} — line {line} (severity flagged as: {severity}):
 ```{language}
 {sanitized_code}
 ```
 
-SCANNER DETECTION CONTEXT:
-- Vulnerability Type: {vulnerability_type}
-- Initial Confidence: {context.get('confidence', 'Unknown')}
-- Reported Severity: {context.get('severity', 'Unknown')}
-- Line Number: {context.get('line', 'Unknown')}
+Provide a COMPREHENSIVE analysis covering:
+1. **VULNERABILITY CONFIRMATION**: Is this a real, exploitable vulnerability given the code above?
+2. **DETAILED EXPLANATION**: Root cause, what makes it dangerous, what an attacker achieves.
+3. **ATTACK SCENARIO**: Step-by-step exploitation of THIS specific code pattern with concrete payloads.
+4. **IMPACT ANALYSIS**: Confidentiality / Integrity / Availability / Compliance implications.
+5. **REMEDIATION**: Complete, production-ready secure code that replaces the vulnerable lines.
+6. **TEST CASES**: Unit tests, security tests with attack payloads, edge cases.
 
-PROVIDE A COMPREHENSIVE ANALYSIS covering:
-
-1. **VULNERABILITY CONFIRMATION**: Is this a real exploitable vulnerability or a false positive?
-
-2. **DETAILED EXPLANATION**: If confirmed, explain IN DETAIL:
-   - What makes this code vulnerable
-   - The root cause of the security flaw
-   - Why this pattern is dangerous
-   - What an attacker could achieve by exploiting this
-
-3. **ATTACK SCENARIO**: Describe a realistic attack scenario:
-   - Step-by-step how an attacker would exploit this
-   - Example malicious payloads they might use
-   - What data/systems could be compromised
-
-4. **IMPACT ANALYSIS**: Assess the business/security impact:
-   - Confidentiality impact (data exposure)
-   - Integrity impact (data modification)
-   - Availability impact (service disruption)
-   - Compliance implications (GDPR, PCI-DSS, etc.)
-
-5. **REMEDIATION**: Provide a complete, secure code fix that:
-   - Directly replaces the vulnerable code
-   - Follows security best practices
-   - Is production-ready
-
-6. **TEST CASES**: Provide comprehensive test cases including:
-   - Unit tests to verify the fix works
-   - Security tests with actual attack payloads
-   - Edge cases that should be handled
-
-RESPONSE FORMAT (strict JSON):
+RESPONSE FORMAT (strict JSON — return ONLY this, no markdown outside):
 {{
     "is_confirmed_vulnerability": true/false,
     "confidence": 0.0-1.0,
     "risk_level": "Low/Medium/High/Critical",
-    "vulnerability_summary": "One-line summary of the issue",
-    "detailed_explanation": "Comprehensive multi-paragraph explanation of why this code is vulnerable, what the root cause is, and the technical details of how the vulnerability works. Be thorough and educational.",
+    "vulnerability_summary": "One-line summary grounded in the code",
+    "detailed_explanation": "Thorough explanation of why THIS code is vulnerable and how it works technically.",
     "attack_scenario": {{
-        "description": "Detailed narrative of how an attacker would exploit this vulnerability step by step",
-        "example_payloads": ["payload1", "payload2", "payload3"],
+        "description": "Step-by-step exploitation of this specific code pattern",
+        "example_payloads": ["payload1", "payload2"],
         "attacker_goal": "What the attacker achieves"
     }},
     "impact_analysis": {{
-        "confidentiality": "High/Medium/Low/None - explanation",
-        "integrity": "High/Medium/Low/None - explanation",
-        "availability": "High/Medium/Low/None - explanation",
-        "compliance": "List of compliance frameworks this may violate"
+        "confidentiality": "High/Medium/Low/None — explanation",
+        "integrity": "High/Medium/Low/None — explanation",
+        "availability": "High/Medium/Low/None — explanation",
+        "compliance": "Compliance frameworks this may violate"
     }},
-    "suggested_fix": "Complete, production-ready code fix that replaces the vulnerable code",
+    "suggested_fix": "Complete, production-ready secure code that replaces the vulnerable code",
     "remediation_steps": [
-        "Step 1: Description of first remediation action",
-        "Step 2: Description of second remediation action",
-        "Step 3: etc."
+        "Step 1: First remediation action",
+        "Step 2: Second remediation action"
     ],
-    "false_positive_reason": "If this is a false positive, explain in detail why it's not actually exploitable",
+    "false_positive_reason": "If NOT a real vulnerability, explain why based strictly on the code — or if the vulnerability type label is unrelated to the code pattern, say that here",
     "suggested_test_cases": [
         {{
             "type": "unit",
             "name": "Descriptive test name",
-            "description": "What this test verifies and why it's important",
+            "description": "What this test verifies",
             "code": "Complete runnable test code in {language}"
         }},
         {{
             "type": "security",
             "name": "Security test name",
-            "description": "What attack vector this tests against",
+            "description": "Attack vector tested",
             "test_inputs": ["malicious_input_1", "malicious_input_2"],
-            "expected_behavior": "What should happen when these inputs are provided"
+            "expected_behavior": "Expected safe behaviour"
         }},
         {{
             "type": "integration",
             "name": "Integration test name",
-            "description": "End-to-end test scenario",
+            "description": "End-to-end scenario",
             "code": "Complete test code"
         }}
     ],
     "security_references": [
         "CWE-XXX: Name",
-        "OWASP Top 10 reference if applicable"
+        "OWASP reference if applicable"
     ]
-}}
-
-IMPORTANT: Return ONLY the JSON object. No markdown, no explanatory text before or after."""
+}}"""
     
     def _sanitize_code(self, code: str) -> str:
         """Remove potential secrets from code before sending to AI"""
